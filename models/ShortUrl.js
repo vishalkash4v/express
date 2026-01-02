@@ -1,0 +1,74 @@
+var mongoose = require('mongoose');
+
+var shortUrlSchema = new mongoose.Schema({
+  originalUrl: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  shortCode: {
+    type: String,
+    required: true,
+    unique: true,
+    trim: true,
+    index: true
+  },
+  customAlias: {
+    type: String,
+    default: null,
+    trim: true
+  },
+  clickCount: {
+    type: Number,
+    default: 0
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now,
+    index: true
+  },
+  expiresAt: {
+    type: Date,
+    default: null
+  },
+  isActive: {
+    type: Boolean,
+    default: true
+  },
+  ipAddress: {
+    type: String,
+    default: null
+  },
+  userAgent: {
+    type: String,
+    default: null
+  }
+}, {
+  timestamps: true
+});
+
+// Index for faster lookups
+shortUrlSchema.index({ shortCode: 1 });
+shortUrlSchema.index({ createdAt: -1 });
+shortUrlSchema.index({ isActive: 1 });
+
+// Method to increment click count
+shortUrlSchema.methods.incrementClick = function() {
+  this.clickCount += 1;
+  return this.save();
+};
+
+// Static method to find by short code
+shortUrlSchema.statics.findByShortCode = function(shortCode) {
+  return this.findOne({ shortCode: shortCode, isActive: true });
+};
+
+// Static method to check if short code exists
+shortUrlSchema.statics.isShortCodeTaken = function(shortCode) {
+  return this.exists({ shortCode: shortCode });
+};
+
+var ShortUrl = mongoose.model('ShortUrl', shortUrlSchema);
+
+module.exports = ShortUrl;
+
