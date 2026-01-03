@@ -41,9 +41,9 @@ Please rewrite the following text. Make it natural and maintain the original mea
 Original text:
 ${text}`;
 
-    // Get the Gemini model
+    // Get the Gemini model (using gemini-1.5-flash for faster responses)
     const model = genAI.getGenerativeModel({ 
-      model: 'gemini-pro',
+      model: 'gemini-1.5-flash',
       generationConfig: {
         temperature: creativityLevel / 10, // Scale 1-10 to 0.1-1.0
         topP: 0.95,
