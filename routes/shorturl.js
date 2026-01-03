@@ -1,5 +1,6 @@
 var express = require('express');
 var router = express.Router();
+var mongoose = require('mongoose');
 var ShortUrl = require('../models/ShortUrl');
 var crypto = require('crypto');
 
