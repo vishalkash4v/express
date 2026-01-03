@@ -42,7 +42,7 @@ var app = express();
 
 // CORS configuration
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:8080',
+  origin: '*', // Allow all origins for now
   credentials: true
 }));
 

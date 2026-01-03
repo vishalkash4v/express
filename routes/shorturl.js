@@ -144,42 +144,29 @@ router.post('/create', async function(req, res, next) {
   }
 });
 
-// Get short URL by code (for redirect)
-router.get('/:shortCode', async function(req, res, next) {
+// Check if short code is available (must come before /:shortCode route)
+router.get('/check/:shortCode', async function(req, res, next) {
   try {
     const { shortCode } = req.params;
 
-    const shortUrl = await ShortUrl.findByShortCode(shortCode);
-
-    if (!shortUrl) {
-      return res.status(404).json({
+    if (!isValidAlias(shortCode)) {
+      return res.status(400).json({
         success: false,
-        error: 'Short URL not found'
+        available: false,
+        error: 'Invalid short code format'
       });
     }
 
-    // Check if expired
-    if (shortUrl.expiresAt && new Date() > shortUrl.expiresAt) {
-      return res.status(410).json({
-        success: false,
-        error: 'Short URL has expired'
-      });
-    }
-
-    // Increment click count
-    await shortUrl.incrementClick();
+    const isTaken = await ShortUrl.isShortCodeTaken(shortCode);
 
     res.json({
       success: true,
-      data: {
-        originalUrl: shortUrl.originalUrl,
-        shortCode: shortUrl.shortCode,
-        clickCount: shortUrl.clickCount + 1
-      }
+      available: !isTaken,
+      shortCode: shortCode
     });
 
   } catch (error) {
-    console.error('Error getting short URL:', error);
+    console.error('Error checking short code:', error);
     res.status(500).json({
       success: false,
       error: 'Internal server error'
@@ -187,7 +174,7 @@ router.get('/:shortCode', async function(req, res, next) {
   }
 });
 
-// Get URL stats
+// Get URL stats (must come before /:shortCode route)
 router.get('/:shortCode/stats', async function(req, res, next) {
   try {
     const { shortCode } = req.params;
@@ -222,29 +209,44 @@ router.get('/:shortCode/stats', async function(req, res, next) {
   }
 });
 
-// Check if short code is available
-router.get('/check/:shortCode', async function(req, res, next) {
+// Get short URL by code (returns JSON with originalUrl for frontend redirect)
+// This must be last as it's a catch-all route
+router.get('/:shortCode', async function(req, res, next) {
   try {
     const { shortCode } = req.params;
 
-    if (!isValidAlias(shortCode)) {
-      return res.status(400).json({
+    const shortUrl = await ShortUrl.findByShortCode(shortCode);
+
+    if (!shortUrl) {
+      return res.status(404).json({
         success: false,
-        available: false,
-        error: 'Invalid short code format'
+        error: 'Short URL not found'
       });
     }
 
-    const isTaken = await ShortUrl.isShortCodeTaken(shortCode);
+    // Check if expired
+    if (shortUrl.expiresAt && new Date() > shortUrl.expiresAt) {
+      return res.status(410).json({
+        success: false,
+        error: 'Short URL has expired'
+      });
+    }
 
+    // Increment click count
+    await shortUrl.incrementClick();
+
+    // Return JSON with originalUrl for frontend to handle redirect
     res.json({
       success: true,
-      available: !isTaken,
-      shortCode: shortCode
+      data: {
+        originalUrl: shortUrl.originalUrl,
+        shortCode: shortUrl.shortCode,
+        clickCount: shortUrl.clickCount
+      }
     });
 
   } catch (error) {
-    console.error('Error checking short code:', error);
+    console.error('Error getting short URL:', error);
     res.status(500).json({
       success: false,
       error: 'Internal server error'
