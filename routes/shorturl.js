@@ -41,6 +41,14 @@ function normalizeUrl(url) {
 // Create short URL
 router.post('/create', async function(req, res, next) {
   try {
+    // Check MongoDB connection
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({
+        success: false,
+        error: 'Database connection not available. Please try again later.'
+      });
+    }
+
     const { originalUrl, customAlias } = req.body;
 
     // Validate original URL
@@ -128,6 +136,7 @@ router.post('/create', async function(req, res, next) {
 
   } catch (error) {
     console.error('Error creating short URL:', error);
+    console.error('Error stack:', error.stack);
     
     // Handle duplicate key error (MongoDB unique constraint)
     if (error.code === 11000) {
@@ -139,7 +148,8 @@ router.post('/create', async function(req, res, next) {
 
     res.status(500).json({
       success: false,
-      error: 'Internal server error. Please try again later.'
+      error: 'Internal server error. Please try again later.',
+      message: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });

@@ -11,15 +11,17 @@ var usersRouter = require('./routes/users');
 var shortUrlRouter = require('./routes/shorturl');
 
 // MongoDB Connection
-const MONGODB_URI = 'mongodb+srv://cqlsysvishal:Lukethedog1234@cluster0.gcqrn8m.mongodb.net/?appName=Cluster0';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://cqlsysvishal:Lukethedog1234@cluster0.gcqrn8m.mongodb.net/fyntools?retryWrites=true&w=majority&appName=Cluster0';
 
 mongoose.connect(MONGODB_URI)
   .then(() => {
-    console.log('MongoDB connected');
+    console.log('MongoDB connected successfully');
+    console.log('Database:', mongoose.connection.name);
   })
   .catch((err) => {
-    console.log('MongoDB not connected');
+    console.log('MongoDB connection failed');
     console.error('MongoDB connection error:', err.message);
+    console.error('Error details:', err);
   });
 
 // MongoDB connection event handlers

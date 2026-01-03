@@ -64,8 +64,9 @@ shortUrlSchema.statics.findByShortCode = function(shortCode) {
 };
 
 // Static method to check if short code exists
-shortUrlSchema.statics.isShortCodeTaken = function(shortCode) {
-  return this.exists({ shortCode: shortCode });
+shortUrlSchema.statics.isShortCodeTaken = async function(shortCode) {
+  const result = await this.exists({ shortCode: shortCode });
+  return result !== null;
 };
 
 var ShortUrl = mongoose.model('ShortUrl', shortUrlSchema);
