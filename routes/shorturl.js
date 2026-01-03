@@ -42,12 +42,21 @@ function normalizeUrl(url) {
 // Create short URL
 router.post('/create', async function(req, res, next) {
   try {
-    // Check MongoDB connection
+    // Ensure MongoDB connection (for serverless - reconnect if needed)
     if (mongoose.connection.readyState !== 1) {
-      return res.status(503).json({
-        success: false,
-        error: 'Database connection not available. Please try again later.'
-      });
+      const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://cqlsysvishal:Lukethedog1234@cluster0.gcqrn8m.mongodb.net/fyntools?retryWrites=true&w=majority&appName=Cluster0';
+      try {
+        await mongoose.connect(MONGODB_URI, {
+          serverSelectionTimeoutMS: 10000,
+          socketTimeoutMS: 45000,
+        });
+      } catch (connectError) {
+        console.error('Failed to connect to MongoDB in route:', connectError);
+        return res.status(503).json({
+          success: false,
+          error: 'Database connection not available. Please check MongoDB Atlas Network Access allows all IPs (0.0.0.0/0).'
+        });
+      }
     }
 
     const { originalUrl, customAlias } = req.body;

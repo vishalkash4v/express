@@ -13,30 +13,53 @@ var shortUrlRouter = require('./routes/shorturl');
 // MongoDB Connection
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://cqlsysvishal:Lukethedog1234@cluster0.gcqrn8m.mongodb.net/fyntools?retryWrites=true&w=majority&appName=Cluster0';
 
-mongoose.connect(MONGODB_URI)
-  .then(() => {
-    console.log('MongoDB connected successfully');
-    console.log('Database:', mongoose.connection.name);
-  })
-  .catch((err) => {
+// Cache the connection to reuse in serverless environments
+let cached = global.mongoose;
+
+if (!cached) {
+  cached = global.mongoose = { conn: null, promise: null };
+}
+
+async function connectDB() {
+  if (cached.conn) {
+    return cached.conn;
+  }
+
+  if (!cached.promise) {
+    const opts = {
+      bufferCommands: false,
+      maxPoolSize: 10,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+      connectTimeoutMS: 30000,
+    };
+
+    cached.promise = mongoose.connect(MONGODB_URI, opts).then((mongoose) => {
+      console.log('MongoDB connected successfully');
+      console.log('Database:', mongoose.connection.name);
+      return mongoose;
+    });
+  }
+
+  try {
+    cached.conn = await cached.promise;
+  } catch (e) {
+    cached.promise = null;
     console.log('MongoDB connection failed');
-    console.error('MongoDB connection error:', err.message);
-    console.error('Error details:', err);
-  });
+    console.error('MongoDB connection error:', e.message);
+    throw e;
+  }
 
-// MongoDB connection event handlers
-mongoose.connection.on('connected', () => {
-  console.log('MongoDB connected');
+  return cached.conn;
+}
+
+// Connect to MongoDB on startup (for serverless, connection is cached)
+connectDB().catch((err) => {
+  console.error('Failed to connect to MongoDB:', err);
 });
 
-mongoose.connection.on('error', (err) => {
-  console.log('MongoDB not connected');
-  console.error('MongoDB connection error:', err.message);
-});
-
-mongoose.connection.on('disconnected', () => {
-  console.log('MongoDB disconnected');
-});
+// Export connectDB for use in routes if needed
+module.exports.connectDB = connectDB;
 
 var app = express();
 
