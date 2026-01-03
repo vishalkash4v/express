@@ -41,26 +41,45 @@ Please rewrite the following text. Make it natural and maintain the original mea
 Original text:
 ${text}`;
 
-    // Get the Gemini model (using gemini-1.0-pro which is stable and available)
-    const model = genAI.getGenerativeModel({ 
-      model: 'gemini-1.0-pro',
-      generationConfig: {
-        temperature: creativityLevel / 10, // Scale 1-10 to 0.1-1.0
-        topP: 0.95,
-        topK: 40,
+    // Try different model names - gemini-1.5-flash-latest is the recommended free tier model
+    let model;
+    let rewrittenText;
+    let lastError;
+    
+    const modelsToTry = ['gemini-1.5-flash-latest', 'gemini-1.5-flash', 'gemini-pro'];
+    
+    for (const modelName of modelsToTry) {
+      try {
+        console.log(`Trying model: ${modelName}`);
+        model = genAI.getGenerativeModel({ 
+          model: modelName,
+          generationConfig: {
+            temperature: creativityLevel / 10, // Scale 1-10 to 0.1-1.0
+            topP: 0.95,
+            topK: 40,
+          }
+        });
+
+        // Generate content
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        rewrittenText = response.text().trim();
+        
+        console.log(`Success with model: ${modelName}`);
+        // If successful, break out of the loop
+        if (rewrittenText) {
+          break;
+        }
+      } catch (err) {
+        lastError = err;
+        console.log(`Model ${modelName} failed: ${err.message}`);
+        continue;
       }
-    });
-
-    // Generate content
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const rewrittenText = response.text().trim();
-
+    }
+    
+    // If all models failed, throw the last error
     if (!rewrittenText) {
-      return res.status(500).json({
-        success: false,
-        error: 'No rewritten text was generated. Please try again.'
-      });
+      throw lastError || new Error('Failed to generate content with any available model. Please check your API key and model access.');
     }
 
     res.json({
