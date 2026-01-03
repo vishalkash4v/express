@@ -38,9 +38,7 @@ mongoose.connection.on('disconnected', () => {
 
 var app = express();
 
-// view engine setup
-app.set('views', path.join(__dirname, 'views'));
-app.set('view engine', 'jade');
+// No view engine needed - API only
 
 // CORS configuration
 app.use(cors({
@@ -65,13 +63,15 @@ app.use(function(req, res, next) {
 
 // error handler
 app.use(function(err, req, res, next) {
-  // set locals, only providing error in development
-  res.locals.message = err.message;
-  res.locals.error = req.app.get('env') === 'development' ? err : {};
-
-  // render the error page
-  res.status(err.status || 500);
-  res.render('error');
+  // Return JSON error response (API only, no views)
+  const status = err.status || 500;
+  const message = err.message || 'Internal Server Error';
+  
+  res.status(status).json({
+    success: false,
+    error: message,
+    ...(req.app.get('env') === 'development' && { stack: err.stack })
+  });
 });
 
 module.exports = app;
