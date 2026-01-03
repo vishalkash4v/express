@@ -9,6 +9,7 @@ var cors = require('cors');
 var indexRouter = require('./routes/index');
 var usersRouter = require('./routes/users');
 var shortUrlRouter = require('./routes/shorturl');
+var rewriteRouter = require('./routes/rewrite');
 
 // MongoDB Connection
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://cqlsysvishal:Lukethedog1234@cluster0.gcqrn8m.mongodb.net/fyntools?retryWrites=true&w=majority&appName=Cluster0';
@@ -80,6 +81,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/', indexRouter);
 app.use('/users', usersRouter);
 app.use('/api/shorturl', shortUrlRouter);
+app.use('/api', rewriteRouter);
 
 // catch 404 and forward to error handler
 app.use(function(req, res, next) {
