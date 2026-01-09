@@ -30,12 +30,14 @@ function isValidAlias(alias) {
   return aliasRegex.test(alias);
 }
 
-// Normalize URL - add https if no protocol
+// Normalize URL - add https if no protocol, but preserve the URL exactly as entered (don't add www)
 function normalizeUrl(url) {
   url = url.trim();
+  // Only add protocol if missing - do NOT add www
   if (!url.match(/^https?:\/\//i)) {
     url = 'https://' + url;
   }
+  // Ensure we don't modify the hostname (preserve www if present, don't add if not present)
   return url;
 }
 
