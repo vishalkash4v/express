@@ -70,3 +70,6 @@ ecosystem.config.js
 *.seed
 *.pid.lock
 
+# Temporary YouTube files
+*-player-script.js
+*-watch.html
