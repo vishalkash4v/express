@@ -13,6 +13,8 @@ var rewriteRouter = require('./routes/rewrite');
 var adminRouter = require('./routes/admin');
 var registerRouter = require('./routes/register');
 var toolReviewRouter = require('./routes/toolreview');
+var contactRouter = require('./routes/contact');
+var notesRouter = require('./routes/notes');
 var { connectDB } = require('./utils/db');
 
 // Connect to MongoDB on startup (for serverless, connection is cached)
@@ -46,6 +48,8 @@ app.use('/api', rewriteRouter);
 app.use('/api/admin', adminRouter);
 app.use('/kuthera', registerRouter);
 app.use('/api/toolreview', toolReviewRouter);
+app.use('/api/contact', contactRouter);
+app.use('/api/notes', notesRouter);
 
 // catch 404 and forward to error handler
 app.use(function(req, res, next) {
