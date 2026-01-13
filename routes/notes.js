@@ -118,15 +118,18 @@ router.post('/save', async function(req, res) {
     const { username, phoneNumber, notes } = req.body;
     const ipAddress = getClientIp(req);
 
-    // Validation
-    if (!username || !username.trim()) {
+    // Validation - at least one of username or phoneNumber is required
+    const normalizedUsername = username ? username.trim().toLowerCase() : null;
+    const normalizedPhone = phoneNumber ? phoneNumber.trim().replace(/\D/g, '') : null;
+
+    if (!normalizedUsername && !normalizedPhone) {
       return res.status(400).json({
         success: false,
-        error: 'Username is required'
+        error: 'Either username or phone number is required'
       });
     }
 
-    if (username.trim().length < 3) {
+    if (normalizedUsername && normalizedUsername.length < 3) {
       return res.status(400).json({
         success: false,
         error: 'Username must be at least 3 characters'
@@ -140,16 +143,22 @@ router.post('/save', async function(req, res) {
       });
     }
 
-    const normalizedUsername = username.trim().toLowerCase();
-    const normalizedPhone = phoneNumber ? phoneNumber.trim().replace(/\D/g, '') : null; // Remove non-digits
-
-    // Find existing notes by username
-    let notesDoc = await Notes.findOne({ username: normalizedUsername });
+    // Find existing notes by username or phone
+    let notesDoc = null;
+    if (normalizedUsername) {
+      notesDoc = await Notes.findOne({ username: normalizedUsername });
+    }
+    if (!notesDoc && normalizedPhone) {
+      notesDoc = await Notes.findOne({ phoneNumber: normalizedPhone });
+    }
 
     if (notesDoc) {
       // Update existing
       notesDoc.notes = notes;
       notesDoc.updatedAt = new Date();
+      if (normalizedUsername) {
+        notesDoc.username = normalizedUsername;
+      }
       if (normalizedPhone) {
         notesDoc.phoneNumber = normalizedPhone;
       }
