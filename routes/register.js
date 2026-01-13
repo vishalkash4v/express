@@ -2,7 +2,7 @@ var express = require('express');
 var router = express.Router();
 var mongoose = require('mongoose');
 var Admin = require('../models/Admin');
-var { connectDB } = require('../app');
+var { connectDB } = require('../utils/db');
 
 // One-time admin registration route - /kuthera
 // This route can only be used once to create the first admin

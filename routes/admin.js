@@ -3,7 +3,7 @@ var router = express.Router();
 var mongoose = require('mongoose');
 var Admin = require('../models/Admin');
 var { authenticateToken, generateToken } = require('../middleware/auth');
-var { connectDB } = require('../app');
+var { connectDB } = require('../utils/db');
 
 // Helper function to ensure DB connection
 async function ensureConnection() {

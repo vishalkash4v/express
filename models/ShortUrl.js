@@ -10,8 +10,7 @@ var shortUrlSchema = new mongoose.Schema({
     type: String,
     required: true,
     unique: true,
-    trim: true,
-    index: true
+    trim: true
   },
   customAlias: {
     type: String,
@@ -21,11 +20,6 @@ var shortUrlSchema = new mongoose.Schema({
   clickCount: {
     type: Number,
     default: 0
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now,
-    index: true
   },
   expiresAt: {
     type: Date,
@@ -48,7 +42,7 @@ var shortUrlSchema = new mongoose.Schema({
 });
 
 // Index for faster lookups
-shortUrlSchema.index({ shortCode: 1 });
+// Note: shortCode already has unique index, createdAt has index via timestamps
 shortUrlSchema.index({ createdAt: -1 });
 shortUrlSchema.index({ isActive: 1 });
 
