@@ -1,8 +1,8 @@
 const nodemailer = require('nodemailer');
 
 const transporter = nodemailer.createTransport({
-  host: "smtp.example.com",       // dummy SMTP host
-  port: 587,                      // usually 587
+  host: "smtp.gmail.com",       // dummy SMTP host
+  port: 465,                      // usually 587
   secure: false,                  // true for 465, false for 587
   auth: {
     user: "bestsmm4all@gmail.com",     // dummy email
