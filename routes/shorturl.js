@@ -42,28 +42,17 @@ function normalizeUrl(url) {
 }
 
 // Create short URL
-router.post('/create', async function(req, res, next) {
+router.post('/create', async function (req, res) {
   try {
-    // Ensure MongoDB connection (for serverless - reconnect if needed)
     if (mongoose.connection.readyState !== 1) {
-      const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://cqlsysvishal:Lukethedog1234@cluster0.gcqrn8m.mongodb.net/fyntools?retryWrites=true&w=majority&appName=Cluster0';
-      try {
-        await mongoose.connect(MONGODB_URI, {
-          serverSelectionTimeoutMS: 10000,
-          socketTimeoutMS: 45000,
-        });
-      } catch (connectError) {
-        console.error('Failed to connect to MongoDB in route:', connectError);
-        return res.status(503).json({
-          success: false,
-          error: 'Database connection not available. Please check MongoDB Atlas Network Access allows all IPs (0.0.0.0/0).'
-        });
-      }
+      await mongoose.connect(process.env.MONGODB_URI, {
+        serverSelectionTimeoutMS: 10000,
+        socketTimeoutMS: 45000,
+      });
     }
 
-    const { originalUrl, customAlias } = req.body;
+    let { originalUrl, customAlias } = req.body;
 
-    // Validate original URL
     if (!originalUrl || !originalUrl.trim()) {
       return res.status(400).json({
         success: false,
@@ -80,18 +69,18 @@ router.post('/create', async function(req, res, next) {
       });
     }
 
-    // Validate custom alias if provided
     if (customAlias) {
+      customAlias = customAlias.trim().toLowerCase();
+
       if (!isValidAlias(customAlias)) {
         return res.status(400).json({
           success: false,
-          error: 'Custom alias must be 3-20 characters and contain only letters, numbers, hyphens, and underscores'
+          error: 'Custom alias must be 3–20 characters and contain only letters, numbers, hyphens, and underscores'
         });
       }
 
-      // Check if alias is already taken
-      const existing = await ShortUrl.isShortCodeTaken(customAlias);
-      if (existing) {
+      const isTaken = await ShortUrl.isShortCodeTaken(customAlias);
+      if (isTaken) {
         return res.status(409).json({
           success: false,
           error: 'This custom alias is already taken. Please choose another one.'
@@ -99,41 +88,29 @@ router.post('/create', async function(req, res, next) {
       }
     }
 
-    // Generate short code
     let shortCode = customAlias || generateShortCode();
-    
-    // If not custom, ensure uniqueness (retry if collision)
+
     if (!customAlias) {
-      let isTaken = await ShortUrl.isShortCodeTaken(shortCode);
       let attempts = 0;
-      while (isTaken && attempts < 5) {
+      while (await ShortUrl.isShortCodeTaken(shortCode)) {
         shortCode = generateShortCode();
-        isTaken = await ShortUrl.isShortCodeTaken(shortCode);
         attempts++;
-      }
-      if (isTaken) {
-        return res.status(500).json({
-          success: false,
-          error: 'Failed to generate unique short code. Please try again.'
-        });
+        if (attempts > 5) {
+          return res.status(500).json({
+            success: false,
+            error: 'Failed to generate unique short code'
+          });
+        }
       }
     }
 
-    // Get client IP and User-Agent
-    const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'];
-    const userAgent = req.headers['user-agent'] || null;
-
-    // Create short URL
-    const shortUrlData = {
+    const shortUrl = await ShortUrl.create({
       originalUrl: normalizedUrl,
-      shortCode: shortCode,
+      shortCode,
       customAlias: customAlias || null,
-      ipAddress: ipAddress,
-      userAgent: userAgent
-    };
-
-    const shortUrl = new ShortUrl(shortUrlData);
-    await shortUrl.save();
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'] || null
+    });
 
     res.json({
       success: true,
@@ -147,24 +124,22 @@ router.post('/create', async function(req, res, next) {
     });
 
   } catch (error) {
-    console.error('Error creating short URL:', error);
-    console.error('Error stack:', error.stack);
-    
-    // Handle duplicate key error (MongoDB unique constraint)
+    console.error(error);
+
     if (error.code === 11000) {
       return res.status(409).json({
         success: false,
-        error: 'This short code is already taken. Please try again or use a custom alias.'
+        error: 'Short code already exists'
       });
     }
 
     res.status(500).json({
       success: false,
-      error: 'Internal server error. Please try again later.',
-      message: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error: 'Internal server error'
     });
   }
 });
+
 
 // Check if short code is available (must come before /:shortCode route)
 router.get('/check/:shortCode', async function(req, res, next) {
