@@ -115,7 +115,7 @@ router.post('/save', async function(req, res) {
       }
     }
 
-    const { username, phoneNumber, notes } = req.body;
+    const { username, phoneNumber, password, notes } = req.body;
     const ipAddress = getClientIp(req);
 
     // Validation - at least one of username or phoneNumber is required
@@ -136,6 +136,13 @@ router.post('/save', async function(req, res) {
       });
     }
 
+    if (!password || password.trim().length < 6) {
+      return res.status(400).json({
+        success: false,
+        error: 'Password is required and must be at least 6 characters'
+      });
+    }
+
     if (!Array.isArray(notes)) {
       return res.status(400).json({
         success: false,
@@ -153,7 +160,15 @@ router.post('/save', async function(req, res) {
     }
 
     if (notesDoc) {
-      // Update existing
+      // Verify password for existing account
+      const isPasswordValid = await notesDoc.comparePassword(password);
+      if (!isPasswordValid) {
+        return res.status(401).json({
+          success: false,
+          error: 'Invalid password'
+        });
+      }
+      // Update existing (don't update password)
       notesDoc.notes = notes;
       notesDoc.updatedAt = new Date();
       if (normalizedUsername) {
@@ -164,10 +179,11 @@ router.post('/save', async function(req, res) {
       }
       await notesDoc.save();
     } else {
-      // Create new
+      // Create new account (password will be hashed by pre-save hook)
       notesDoc = new Notes({
         username: normalizedUsername,
         phoneNumber: normalizedPhone,
+        password: password, // Will be hashed by pre-save hook
         notes: notes,
       });
       await notesDoc.save();
@@ -192,6 +208,64 @@ router.post('/save', async function(req, res) {
     res.status(500).json({
       success: false,
       error: 'Failed to save notes. Please try again.'
+    });
+  }
+});
+
+// Login/Verify password and load notes
+router.post('/login', async function(req, res) {
+  try {
+    await connectDB();
+    const { username, phoneNumber, password } = req.body;
+    
+    if (!password || !password.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Password is required'
+      });
+    }
+
+    // Find by username or phone
+    let notesDoc = null;
+    if (username && username.trim()) {
+      const normalizedUsername = username.trim().toLowerCase();
+      notesDoc = await Notes.findOne({ username: normalizedUsername });
+    }
+    if (!notesDoc && phoneNumber && phoneNumber.trim()) {
+      const normalizedPhone = phoneNumber.trim().replace(/\D/g, '');
+      notesDoc = await Notes.findOne({ phoneNumber: normalizedPhone });
+    }
+
+    if (!notesDoc) {
+      return res.status(404).json({
+        success: false,
+        error: 'Account not found'
+      });
+    }
+
+    // Verify password
+    const isPasswordValid = await notesDoc.comparePassword(password);
+    if (!isPasswordValid) {
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid password'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        username: notesDoc.username,
+        phoneNumber: notesDoc.phoneNumber,
+        notes: notesDoc.notes || [],
+        updatedAt: notesDoc.updatedAt
+      }
+    });
+  } catch (error) {
+    console.error('Login notes error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to login'
     });
   }
 });
