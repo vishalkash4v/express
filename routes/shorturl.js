@@ -44,11 +44,29 @@ function normalizeUrl(url) {
 // Create short URL
 router.post('/create', async function (req, res) {
   try {
-    if (mongoose.connection.readyState !== 1) {
-      await mongoose.connect(process.env.MONGODB_URI, {
-        serverSelectionTimeoutMS: 10000,
-        socketTimeoutMS: 45000,
+    // Ensure MongoDB connection
+    const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://cqlsysvishal:Lukethedog1234@cluster0.gcqrn8m.mongodb.net/fyntools?retryWrites=true&w=majority&appName=Cluster0';
+    
+    if (!MONGODB_URI) {
+      return res.status(500).json({
+        success: false,
+        error: 'Database configuration error. Please contact support.'
       });
+    }
+
+    if (mongoose.connection.readyState !== 1) {
+      try {
+        await mongoose.connect(MONGODB_URI, {
+          serverSelectionTimeoutMS: 10000,
+          socketTimeoutMS: 45000,
+        });
+      } catch (connectError) {
+        console.error('Failed to connect to MongoDB in route:', connectError);
+        return res.status(503).json({
+          success: false,
+          error: 'Database connection not available. Please try again later.'
+        });
+      }
     }
 
     let { originalUrl, customAlias } = req.body;
@@ -69,6 +87,8 @@ router.post('/create', async function (req, res) {
       });
     }
 
+    let shortCode;
+    
     if (customAlias) {
       customAlias = customAlias.trim().toLowerCase();
 
@@ -79,6 +99,7 @@ router.post('/create', async function (req, res) {
         });
       }
 
+      // Check if alias is already taken (with race condition protection)
       const isTaken = await ShortUrl.isShortCodeTaken(customAlias);
       if (isTaken) {
         return res.status(409).json({
@@ -86,31 +107,43 @@ router.post('/create', async function (req, res) {
           error: 'This custom alias is already taken. Please choose another one.'
         });
       }
-    }
 
-    let shortCode = customAlias || generateShortCode();
-
-    if (!customAlias) {
+      shortCode = customAlias;
+    } else {
+      // Generate random short code
       let attempts = 0;
-      while (await ShortUrl.isShortCodeTaken(shortCode)) {
+      do {
         shortCode = generateShortCode();
         attempts++;
-        if (attempts > 5) {
+        if (attempts > 10) {
           return res.status(500).json({
             success: false,
-            error: 'Failed to generate unique short code'
+            error: 'Failed to generate unique short code. Please try again.'
           });
         }
-      }
+      } while (await ShortUrl.isShortCodeTaken(shortCode));
     }
 
-    const shortUrl = await ShortUrl.create({
-      originalUrl: normalizedUrl,
-      shortCode,
-      customAlias: customAlias || null,
-      ipAddress: req.ip,
-      userAgent: req.headers['user-agent'] || null
-    });
+    // Create short URL - use try-catch to handle duplicate key errors (race conditions)
+    let shortUrl;
+    try {
+      shortUrl = await ShortUrl.create({
+        originalUrl: normalizedUrl,
+        shortCode,
+        customAlias: customAlias || null,
+        ipAddress: req.ip || req.connection?.remoteAddress || req.headers['x-forwarded-for'] || null,
+        userAgent: req.headers['user-agent'] || null
+      });
+    } catch (createError) {
+      // Handle duplicate key error (E11000) - race condition where alias was taken between check and create
+      if (createError.code === 11000 || createError.name === 'MongoServerError') {
+        return res.status(409).json({
+          success: false,
+          error: 'This custom alias is already taken. Please choose another one.'
+        });
+      }
+      throw createError; // Re-throw if it's a different error
+    }
 
     res.json({
       success: true,
@@ -124,18 +157,27 @@ router.post('/create', async function (req, res) {
     });
 
   } catch (error) {
-    console.error(error);
+    console.error('Error creating short URL:', error);
 
-    if (error.code === 11000) {
+    // Handle duplicate key error (E11000) - race condition where alias was taken between check and create
+    if (error.code === 11000 || (error.name === 'MongoServerError' && error.code === 11000)) {
       return res.status(409).json({
         success: false,
-        error: 'Short code already exists'
+        error: 'This custom alias is already taken. Please choose another one.'
+      });
+    }
+
+    // Handle MongoDB connection errors
+    if (error.message && (error.message.includes('uri') && error.message.includes('undefined') || error.message.includes('MongoDB'))) {
+      return res.status(500).json({
+        success: false,
+        error: 'Database configuration error. Please contact support.'
       });
     }
 
     res.status(500).json({
       success: false,
-      error: 'Internal server error'
+      error: 'Internal server error. Please try again later.'
     });
   }
 });
@@ -144,6 +186,25 @@ router.post('/create', async function (req, res) {
 // Check if short code is available (must come before /:shortCode route)
 router.get('/check/:shortCode', async function(req, res, next) {
   try {
+    // Ensure MongoDB connection
+    const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://cqlsysvishal:Lukethedog1234@cluster0.gcqrn8m.mongodb.net/fyntools?retryWrites=true&w=majority&appName=Cluster0';
+    
+    if (mongoose.connection.readyState !== 1 && MONGODB_URI) {
+      try {
+        await mongoose.connect(MONGODB_URI, {
+          serverSelectionTimeoutMS: 10000,
+          socketTimeoutMS: 45000,
+        });
+      } catch (connectError) {
+        console.error('Failed to connect to MongoDB in check route:', connectError);
+        return res.status(503).json({
+          success: false,
+          available: false,
+          error: 'Database connection not available'
+        });
+      }
+    }
+
     const { shortCode } = req.params;
 
     if (!isValidAlias(shortCode)) {
@@ -166,6 +227,7 @@ router.get('/check/:shortCode', async function(req, res, next) {
     console.error('Error checking short code:', error);
     res.status(500).json({
       success: false,
+      available: false,
       error: 'Internal server error'
     });
   }
