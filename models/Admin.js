@@ -44,23 +44,22 @@ var adminSchema = new mongoose.Schema({
 });
 
 // Hash password before saving
-adminSchema.pre('save', async function(next) {
+adminSchema.pre('save', async function() {
   if (!this.isModified('password')) {
     this.updatedAt = Date.now();
-    return next();
+    return;
   }
   
   try {
     if (!this.password) {
-      return next(new Error('Password is required'));
+      throw new Error('Password is required');
     }
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);
     this.updatedAt = Date.now();
-    next();
   } catch (error) {
     console.error('Error hashing password:', error);
-    next(error);
+    throw error;
   }
 });
 
