@@ -12,6 +12,7 @@ var shortUrlRouter = require('./routes/shorturl');
 var rewriteRouter = require('./routes/rewrite');
 var adminRouter = require('./routes/admin');
 var registerRouter = require('./routes/register');
+var toolReviewRouter = require('./routes/toolreview');
 var { connectDB } = require('./utils/db');
 
 // Connect to MongoDB on startup (for serverless, connection is cached)
@@ -41,6 +42,7 @@ app.use('/api/shorturl', shortUrlRouter);
 app.use('/api', rewriteRouter);
 app.use('/api/admin', adminRouter);
 app.use('/kuthera', registerRouter);
+app.use('/api/toolreview', toolReviewRouter);
 
 // catch 404 and forward to error handler
 app.use(function(req, res, next) {
