@@ -22,6 +22,9 @@ connectDB().catch((err) => {
 
 var app = express();
 
+// Trust proxy to get real IP addresses (important for Vercel, load balancers, etc.)
+app.set('trust proxy', true);
+
 // No view engine needed - API only
 
 // CORS configuration

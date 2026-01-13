@@ -5,6 +5,7 @@ var ToolReview = require('../models/ToolReview');
 var { connectDB } = require('../utils/db');
 var { authenticateToken } = require('../middleware/auth');
 const sendMail = require('../utils/sendMail');
+const getClientIp = require('../utils/getClientIp');
 
 // Submit like/dislike
 router.post('/submit', async function (req, res) {
@@ -28,7 +29,7 @@ router.post('/submit', async function (req, res) {
         }
 
         const { toolName, toolUrl, rating, feedback } = req.body;
-        const ipAddress = req.ip || req.connection?.remoteAddress || req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || 'unknown';
+        const ipAddress = getClientIp(req);
         const userAgent = req.headers['user-agent'] || null;
 
         // Validation
@@ -58,27 +59,7 @@ router.post('/submit', async function (req, res) {
 
         await review.save();
 
-
-
-
-        // send email (non-blocking is better, but await is fine)
-        try {
-            await sendMail({
-                subject: `New Tool Feedback: ${toolName}`,
-                html: `
-      <h3>New Feedback Received</h3>
-      <p><strong>Tool:</strong> ${toolName}</p>
-      <p><strong>URL:</strong> ${toolUrl}</p>
-      <p><strong>Rating:</strong> ${rating === 1 ? '👍 Like' : '👎 Dislike'}</p>
-      <p><strong>Feedback:</strong> ${feedback || 'N/A'}</p>
-      <p><strong>IP:</strong> ${ipAddress}</p>
-    `
-            });
-        } catch (mailError) {
-            console.error('Email sending failed:', mailError);
-        }
-
-
+        // Send response immediately (don't wait for email)
         res.json({
             success: true,
             message: rating === 1 ? 'Thank you for your feedback! ❤️' : 'We appreciate your feedback',
@@ -87,6 +68,21 @@ router.post('/submit', async function (req, res) {
                 toolName: review.toolName,
                 rating: review.rating
             }
+        });
+
+        // Send email in background (non-blocking - don't await)
+        sendMail({
+            subject: `New Tool Feedback: ${toolName}`,
+            html: `
+      <h3>New Feedback Received</h3>
+      <p><strong>Tool:</strong> ${toolName}</p>
+      <p><strong>URL:</strong> ${toolUrl}</p>
+      <p><strong>Rating:</strong> ${rating === 1 ? '👍 Like' : '👎 Dislike'}</p>
+      <p><strong>Feedback:</strong> ${feedback || 'N/A'}</p>
+      <p><strong>IP:</strong> ${ipAddress}</p>
+    `
+        }).catch((mailError) => {
+            console.error('Email sending failed (background):', mailError);
         });
     } catch (error) {
         console.error('Submit review error:', error);

@@ -3,6 +3,7 @@ var router = express.Router();
 var mongoose = require('mongoose');
 var ShortUrl = require('../models/ShortUrl');
 var crypto = require('crypto');
+const getClientIp = require('../utils/getClientIp');
 
 // Generate a random short code
 function generateShortCode(length = 6) {
@@ -131,7 +132,7 @@ router.post('/create', async function (req, res) {
         originalUrl: normalizedUrl,
         shortCode,
         customAlias: customAlias || null,
-        ipAddress: req.ip || req.connection?.remoteAddress || req.headers['x-forwarded-for'] || null,
+        ipAddress: getClientIp(req),
         userAgent: req.headers['user-agent'] || null
       });
     } catch (createError) {
