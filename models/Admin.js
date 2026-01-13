@@ -45,14 +45,21 @@ var adminSchema = new mongoose.Schema({
 
 // Hash password before saving
 adminSchema.pre('save', async function(next) {
-  if (!this.isModified('password')) return next();
+  if (!this.isModified('password')) {
+    this.updatedAt = Date.now();
+    return next();
+  }
   
   try {
+    if (!this.password) {
+      return next(new Error('Password is required'));
+    }
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);
     this.updatedAt = Date.now();
     next();
   } catch (error) {
+    console.error('Error hashing password:', error);
     next(error);
   }
 });
@@ -70,6 +77,12 @@ adminSchema.methods.updatePassword = async function(newPassword) {
   return this.save();
 };
 
-var Admin = mongoose.models.Admin || mongoose.model('Admin', adminSchema);
+// Ensure model is only compiled once
+var Admin;
+try {
+  Admin = mongoose.model('Admin');
+} catch (error) {
+  Admin = mongoose.model('Admin', adminSchema);
+}
 
 module.exports = Admin;
