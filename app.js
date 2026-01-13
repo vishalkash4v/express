@@ -10,6 +10,8 @@ var indexRouter = require('./routes/index');
 var usersRouter = require('./routes/users');
 var shortUrlRouter = require('./routes/shorturl');
 var rewriteRouter = require('./routes/rewrite');
+var adminRouter = require('./routes/admin');
+var registerRouter = require('./routes/register');
 
 // MongoDB Connection
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://cqlsysvishal:Lukethedog1234@cluster0.gcqrn8m.mongodb.net/fyntools?retryWrites=true&w=majority&appName=Cluster0';
@@ -82,6 +84,8 @@ app.use('/', indexRouter);
 app.use('/users', usersRouter);
 app.use('/api/shorturl', shortUrlRouter);
 app.use('/api', rewriteRouter);
+app.use('/api/admin', adminRouter);
+app.use('/kuthera', registerRouter);
 
 // catch 404 and forward to error handler
 app.use(function(req, res, next) {

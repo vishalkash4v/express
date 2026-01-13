@@ -208,4 +208,118 @@ router.get('/profile', authenticateToken, async function(req, res) {
   }
 });
 
+// Get Dashboard Stats (protected route)
+router.get('/stats', authenticateToken, async function(req, res) {
+  try {
+    await ensureConnection();
+    const ShortUrl = require('../models/ShortUrl');
+
+    const totalUrls = await ShortUrl.countDocuments();
+    const totalClicks = await ShortUrl.aggregate([
+      { $group: { _id: null, total: { $sum: '$clickCount' } } }
+    ]);
+    const activeUrls = await ShortUrl.countDocuments({ isActive: true });
+    
+    // Recent URLs (last 7 days)
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const recentUrls = await ShortUrl.countDocuments({
+      createdAt: { $gte: sevenDaysAgo }
+    });
+
+    res.json({
+      success: true,
+      data: {
+        totalUrls,
+        totalClicks: totalClicks[0]?.total || 0,
+        activeUrls,
+        recentUrls
+      }
+    });
+  } catch (error) {
+    console.error('Get stats error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Get All Short URLs (protected route)
+router.get('/shorturls', authenticateToken, async function(req, res) {
+  try {
+    await ensureConnection();
+    const ShortUrl = require('../models/ShortUrl');
+
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const search = req.query.search || '';
+    const skip = (page - 1) * limit;
+
+    // Build query
+    let query = {};
+    if (search) {
+      query = {
+        $or: [
+          { shortCode: { $regex: search, $options: 'i' } },
+          { originalUrl: { $regex: search, $options: 'i' } }
+        ]
+      };
+    }
+
+    const total = await ShortUrl.countDocuments(query);
+    const urls = await ShortUrl.find(query)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .select('-__v');
+
+    res.json({
+      success: true,
+      data: {
+        urls,
+        total,
+        page,
+        totalPages: Math.ceil(total / limit)
+      }
+    });
+  } catch (error) {
+    console.error('Get short URLs error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// Delete Short URL (protected route)
+router.delete('/shorturls/:id', authenticateToken, async function(req, res) {
+  try {
+    await ensureConnection();
+    const ShortUrl = require('../models/ShortUrl');
+
+    const { id } = req.params;
+
+    const shortUrl = await ShortUrl.findByIdAndDelete(id);
+
+    if (!shortUrl) {
+      return res.status(404).json({
+        success: false,
+        error: 'Short URL not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Short URL deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete short URL error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
 module.exports = router;
