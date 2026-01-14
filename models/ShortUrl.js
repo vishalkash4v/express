@@ -29,6 +29,10 @@ var shortUrlSchema = new mongoose.Schema({
     type: Boolean,
     default: true
   },
+  directRedirect: {
+    type: Boolean,
+    default: false
+  },
   ipAddress: {
     type: String,
     default: null

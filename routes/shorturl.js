@@ -4,6 +4,7 @@ var mongoose = require('mongoose');
 var ShortUrl = require('../models/ShortUrl');
 var crypto = require('crypto');
 const getClientIp = require('../utils/getClientIp');
+const { connectDB } = require('../utils/db');
 
 // Generate a random short code
 function generateShortCode(length = 6) {
@@ -42,35 +43,34 @@ function normalizeUrl(url) {
   return url;
 }
 
+// Helper function to ensure database connection with retry
+const ensureConnection = async (maxRetries = 3) => {
+  let lastError = null;
+  
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      await connectDB();
+      if (mongoose.connection.readyState === 1) {
+        return true;
+      }
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxRetries - 1) {
+        await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+      }
+    }
+  }
+  
+  throw lastError || new Error('Failed to connect to database after retries');
+};
+
 // Create short URL
 router.post('/create', async function (req, res) {
   try {
-    // Ensure MongoDB connection
-    const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://cqlsysvishal:Lukethedog1234@cluster0.gcqrn8m.mongodb.net/fyntools?retryWrites=true&w=majority&appName=Cluster0';
-    
-    if (!MONGODB_URI) {
-      return res.status(500).json({
-        success: false,
-        error: 'Database configuration error. Please contact support.'
-      });
-    }
+    // Ensure MongoDB connection with retry
+    await ensureConnection();
 
-    if (mongoose.connection.readyState !== 1) {
-      try {
-        await mongoose.connect(MONGODB_URI, {
-          serverSelectionTimeoutMS: 10000,
-          socketTimeoutMS: 45000,
-        });
-      } catch (connectError) {
-        console.error('Failed to connect to MongoDB in route:', connectError);
-        return res.status(503).json({
-          success: false,
-          error: 'Database connection not available. Please try again later.'
-        });
-      }
-    }
-
-    let { originalUrl, customAlias } = req.body;
+    let { originalUrl, customAlias, expiresAt, directRedirect } = req.body;
 
     if (!originalUrl || !originalUrl.trim()) {
       return res.status(400).json({
@@ -125,6 +125,28 @@ router.post('/create', async function (req, res) {
       } while (await ShortUrl.isShortCodeTaken(shortCode));
     }
 
+    // Validate and process expiration date
+    let expirationDate = null;
+    if (expiresAt) {
+      expirationDate = new Date(expiresAt);
+      if (isNaN(expirationDate.getTime())) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid expiration date format'
+        });
+      }
+      // Ensure expiration is in the future
+      if (expirationDate <= new Date()) {
+        return res.status(400).json({
+          success: false,
+          error: 'Expiration date must be in the future'
+        });
+      }
+    }
+
+    // Validate directRedirect flag
+    const isDirectRedirect = directRedirect === true || directRedirect === 'true';
+
     // Create short URL - use try-catch to handle duplicate key errors (race conditions)
     let shortUrl;
     try {
@@ -132,6 +154,8 @@ router.post('/create', async function (req, res) {
         originalUrl: normalizedUrl,
         shortCode,
         customAlias: customAlias || null,
+        expiresAt: expirationDate,
+        directRedirect: isDirectRedirect,
         ipAddress: getClientIp(req),
         userAgent: req.headers['user-agent'] || null
       });
@@ -153,7 +177,9 @@ router.post('/create', async function (req, res) {
         shortCode: shortUrl.shortCode,
         shortUrl: `${req.protocol}://${req.get('host')}/s/${shortUrl.shortCode}`,
         createdAt: shortUrl.createdAt,
-        clickCount: shortUrl.clickCount
+        clickCount: shortUrl.clickCount,
+        expiresAt: shortUrl.expiresAt,
+        directRedirect: shortUrl.directRedirect
       }
     });
 
@@ -169,10 +195,18 @@ router.post('/create', async function (req, res) {
     }
 
     // Handle MongoDB connection errors
-    if (error.message && (error.message.includes('uri') && error.message.includes('undefined') || error.message.includes('MongoDB'))) {
-      return res.status(500).json({
+    if (error.message && (error.message.includes('uri') && error.message.includes('undefined') || error.message.includes('MongoDB') || error.message.includes('connection'))) {
+      return res.status(503).json({
         success: false,
-        error: 'Database configuration error. Please contact support.'
+        error: 'Database connection error. Please try again in a moment.'
+      });
+    }
+
+    // Handle validation errors
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({
+        success: false,
+        error: error.message || 'Invalid input data'
       });
     }
 
@@ -187,24 +221,8 @@ router.post('/create', async function (req, res) {
 // Check if short code is available (must come before /:shortCode route)
 router.get('/check/:shortCode', async function(req, res, next) {
   try {
-    // Ensure MongoDB connection
-    const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://cqlsysvishal:Lukethedog1234@cluster0.gcqrn8m.mongodb.net/fyntools?retryWrites=true&w=majority&appName=Cluster0';
-    
-    if (mongoose.connection.readyState !== 1 && MONGODB_URI) {
-      try {
-        await mongoose.connect(MONGODB_URI, {
-          serverSelectionTimeoutMS: 10000,
-          socketTimeoutMS: 45000,
-        });
-      } catch (connectError) {
-        console.error('Failed to connect to MongoDB in check route:', connectError);
-        return res.status(503).json({
-          success: false,
-          available: false,
-          error: 'Database connection not available'
-        });
-      }
-    }
+    // Ensure MongoDB connection with retry
+    await ensureConnection();
 
     const { shortCode } = req.params;
 
@@ -226,6 +244,16 @@ router.get('/check/:shortCode', async function(req, res, next) {
 
   } catch (error) {
     console.error('Error checking short code:', error);
+    
+    // Handle connection errors
+    if (error.message && (error.message.includes('MongoDB') || error.message.includes('connection'))) {
+      return res.status(503).json({
+        success: false,
+        available: false,
+        error: 'Database connection error. Please try again.'
+      });
+    }
+    
     res.status(500).json({
       success: false,
       available: false,
@@ -237,6 +265,9 @@ router.get('/check/:shortCode', async function(req, res, next) {
 // Get URL stats (must come before /:shortCode route)
 router.get('/:shortCode/stats', async function(req, res, next) {
   try {
+    // Ensure MongoDB connection with retry
+    await ensureConnection();
+    
     const { shortCode } = req.params;
 
     const shortUrl = await ShortUrl.findByShortCode(shortCode);
@@ -262,6 +293,15 @@ router.get('/:shortCode/stats', async function(req, res, next) {
 
   } catch (error) {
     console.error('Error getting URL stats:', error);
+    
+    // Handle connection errors
+    if (error.message && (error.message.includes('MongoDB') || error.message.includes('connection'))) {
+      return res.status(503).json({
+        success: false,
+        error: 'Database connection error. Please try again.'
+      });
+    }
+    
     res.status(500).json({
       success: false,
       error: 'Internal server error'
@@ -269,10 +309,13 @@ router.get('/:shortCode/stats', async function(req, res, next) {
   }
 });
 
-// Get short URL by code (returns JSON with originalUrl for frontend redirect)
+// Get short URL by code (returns JSON with originalUrl for frontend redirect OR 301 redirect)
 // This must be last as it's a catch-all route
 router.get('/:shortCode', async function(req, res, next) {
   try {
+    // Ensure MongoDB connection with retry
+    await ensureConnection();
+    
     const { shortCode } = req.params;
 
     const shortUrl = await ShortUrl.findByShortCode(shortCode);
@@ -292,10 +335,17 @@ router.get('/:shortCode', async function(req, res, next) {
       });
     }
 
-    // Increment click count
-    await shortUrl.incrementClick();
+    // Increment click count (non-blocking)
+    shortUrl.incrementClick().catch(err => {
+      console.error('Error incrementing click count:', err);
+    });
 
-    // Return JSON with originalUrl for frontend to handle redirect
+    // If directRedirect is enabled, do 301 redirect immediately
+    if (shortUrl.directRedirect) {
+      return res.redirect(301, shortUrl.originalUrl);
+    }
+
+    // Otherwise, return JSON with originalUrl for frontend to handle redirect
     res.json({
       success: true,
       data: {
@@ -307,6 +357,15 @@ router.get('/:shortCode', async function(req, res, next) {
 
   } catch (error) {
     console.error('Error getting short URL:', error);
+    
+    // Handle connection errors
+    if (error.message && (error.message.includes('MongoDB') || error.message.includes('connection'))) {
+      return res.status(503).json({
+        success: false,
+        error: 'Database connection error. Please try again.'
+      });
+    }
+    
     res.status(500).json({
       success: false,
       error: 'Internal server error'
