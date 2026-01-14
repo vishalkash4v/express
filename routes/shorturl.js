@@ -340,16 +340,31 @@ router.get('/:shortCode', async function(req, res, next) {
       console.error('Error incrementing click count:', err);
     });
 
-    // If directRedirect is enabled, ALWAYS return 301 redirect for fastest redirect
-    // For browser navigation, this will be followed automatically
-    // For fetch requests, the frontend will handle it
+    // If directRedirect is enabled, check request type
+    // Browser navigation -> 301 redirect (fastest)
+    // Fetch/API requests -> JSON with redirect info (CORS-safe)
     if (shortUrl.directRedirect) {
-      // Always do 301 redirect - this is the fastest way
-      // Browsers will follow it automatically, fetch requests can read Location header
-      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-      res.setHeader('Pragma', 'no-cache');
-      res.setHeader('Expires', '0');
-      return res.redirect(301, shortUrl.originalUrl);
+      const acceptHeader = req.headers.accept || '';
+      const userAgent = req.headers['user-agent'] || '';
+      const isBrowserNavigation = acceptHeader.includes('text/html') && !acceptHeader.includes('application/json');
+      
+      if (isBrowserNavigation) {
+        // Direct browser navigation - return 301 redirect (fastest)
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        return res.redirect(301, shortUrl.originalUrl);
+      } else {
+        // Fetch/API request - return JSON with redirect info (CORS-safe)
+        return res.json({
+          success: true,
+          redirect: true,
+          location: shortUrl.originalUrl,
+          data: {
+            originalUrl: shortUrl.originalUrl,
+            shortCode: shortUrl.shortCode,
+            clickCount: shortUrl.clickCount
+          }
+        });
+      }
     }
 
     // Otherwise, return JSON with originalUrl for frontend to handle redirect
