@@ -32,7 +32,8 @@ app.set('trust proxy', true);
 // CORS configuration
 app.use(cors({
   origin: '*', // Allow all origins for now
-  credentials: true
+  credentials: true,
+  exposedHeaders: ['Location'] // Expose Location header for redirects
 }));
 
 app.use(logger('dev'));

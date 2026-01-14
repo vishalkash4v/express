@@ -340,9 +340,30 @@ router.get('/:shortCode', async function(req, res, next) {
       console.error('Error incrementing click count:', err);
     });
 
-    // If directRedirect is enabled, do 301 redirect immediately
+    // If directRedirect is enabled, check if request is from browser (has Accept header with text/html)
+    // If it's a browser request, do 301 redirect for SEO
+    // If it's an API request (fetch), return JSON with redirect info
     if (shortUrl.directRedirect) {
-      return res.redirect(301, shortUrl.originalUrl);
+      const acceptHeader = req.headers.accept || '';
+      const isBrowserRequest = acceptHeader.includes('text/html') && !acceptHeader.includes('application/json');
+      
+      if (isBrowserRequest) {
+        // Browser request - do true 301 redirect for SEO
+        return res.redirect(301, shortUrl.originalUrl);
+      } else {
+        // API/fetch request - return JSON with redirect info so frontend can handle it
+        // This avoids opaque redirect issues with CORS
+        return res.json({
+          success: true,
+          redirect: true,
+          location: shortUrl.originalUrl,
+          data: {
+            originalUrl: shortUrl.originalUrl,
+            shortCode: shortUrl.shortCode,
+            clickCount: shortUrl.clickCount
+          }
+        });
+      }
     }
 
     // Otherwise, return JSON with originalUrl for frontend to handle redirect
