@@ -72,9 +72,19 @@ router.post('/', async function(req, res) {
     });
   } catch (error) {
     console.error('Create trip error:', error);
+    
+    // Handle validation errors
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map((e: any) => e.message);
+      return res.status(400).json({
+        success: false,
+        error: errors.join(', ')
+      });
+    }
+
     res.status(500).json({
       success: false,
-      error: 'Failed to create trip'
+      error: 'Failed to create trip. Please try again.'
     });
   }
 });

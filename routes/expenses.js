@@ -93,9 +93,27 @@ router.post('/:tripId/expenses', isTripMember, hasPermission(['ADD_EDIT', 'DELET
     });
   } catch (error) {
     console.error('Create expense error:', error);
+    
+    // Handle validation errors
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map((e: any) => e.message);
+      return res.status(400).json({
+        success: false,
+        error: errors.join(', ')
+      });
+    }
+
+    // Handle cast errors (invalid ObjectId, etc.)
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid ${error.path || 'data'} provided`
+      });
+    }
+
     res.status(500).json({
       success: false,
-      error: 'Failed to create expense'
+      error: 'Failed to create expense. Please check all fields and try again.'
     });
   }
 });
@@ -197,9 +215,27 @@ router.patch('/:tripId/expenses/:expenseId', isTripMember, hasPermission(['ADD_E
     });
   } catch (error) {
     console.error('Update expense error:', error);
+    
+    // Handle validation errors
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map((e: any) => e.message);
+      return res.status(400).json({
+        success: false,
+        error: errors.join(', ')
+      });
+    }
+
+    // Handle cast errors
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid ${error.path || 'data'} provided`
+      });
+    }
+
     res.status(500).json({
       success: false,
-      error: 'Failed to update expense'
+      error: 'Failed to update expense. Please check all fields and try again.'
     });
   }
 });
@@ -248,7 +284,7 @@ router.delete('/:tripId/expenses/:expenseId', isTripMember, hasPermission(['DELE
     console.error('Delete expense error:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to delete expense'
+      error: 'Failed to delete expense. Please try again.'
     });
   }
 });

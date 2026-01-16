@@ -50,7 +50,13 @@ var participantSchema = new mongoose.Schema({
 });
 
 // Indexes
-participantSchema.index({ tripId: 1, userId: 1 }, { unique: true, sparse: true });
+// Only enforce uniqueness when userId is not null
+// Allow multiple participants without userId in the same trip
+participantSchema.index({ tripId: 1, userId: 1 }, { 
+  unique: true, 
+  sparse: true,
+  partialFilterExpression: { userId: { $ne: null } }
+});
 participantSchema.index({ tripId: 1 });
 participantSchema.index({ userId: 1 });
 

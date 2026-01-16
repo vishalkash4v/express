@@ -72,7 +72,21 @@ router.post('/:tripId/participants', isTripMember, hasPermission(['ADMIN']), asy
       if (existingParticipant) {
         return res.status(409).json({
           success: false,
-          error: 'User is already a participant'
+          error: 'This user is already a participant in this trip'
+        });
+      }
+    } else {
+      // Check if participant with same name already exists (for participants without userId)
+      const existingByName = await Participant.findOne({
+        tripId: trip._id,
+        userId: null,
+        name: name.trim()
+      });
+
+      if (existingByName) {
+        return res.status(409).json({
+          success: false,
+          error: `A participant named "${name.trim()}" already exists in this trip`
         });
       }
     }
@@ -93,15 +107,46 @@ router.post('/:tripId/participants', isTripMember, hasPermission(['ADMIN']), asy
       role: participant.role
     }, performedBy);
 
+    // Emit Socket.IO event
+    const io = req.app.get('io');
+    if (io) {
+      io.toTrip(tripId, 'participant-added', participant);
+    }
+
     res.status(201).json({
       success: true,
       data: participant
     });
   } catch (error) {
     console.error('Add participant error:', error);
+    
+    // Handle MongoDB duplicate key error
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyPattern || {})[0] || 'participant';
+      if (field === 'userId' || error.keyPattern?.userId) {
+        return res.status(409).json({
+          success: false,
+          error: 'This user is already a participant in this trip'
+        });
+      }
+      return res.status(409).json({
+        success: false,
+        error: 'A participant with these details already exists. Please use a different name or email.'
+      });
+    }
+
+    // Handle validation errors
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map((e: any) => e.message);
+      return res.status(400).json({
+        success: false,
+        error: errors.join(', ')
+      });
+    }
+
     res.status(500).json({
       success: false,
-      error: 'Failed to add participant'
+      error: 'Failed to add participant. Please try again.'
     });
   }
 });
@@ -183,9 +228,35 @@ router.patch('/:tripId/participants/:participantId', isTripMember, hasPermission
     });
   } catch (error) {
     console.error('Update participant error:', error);
+    
+    // Handle validation errors
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map((e: any) => e.message);
+      return res.status(400).json({
+        success: false,
+        error: errors.join(', ')
+      });
+    }
+
+    // Handle cast errors
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid ${error.path || 'data'} provided`
+      });
+    }
+
+    // Handle MongoDB duplicate key error
+    if (error.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        error: 'A participant with these details already exists'
+      });
+    }
+
     res.status(500).json({
       success: false,
-      error: 'Failed to update participant'
+      error: 'Failed to update participant. Please check all fields and try again.'
     });
   }
 });
@@ -233,7 +304,7 @@ router.delete('/:tripId/participants/:participantId', isTripMember, hasPermissio
     console.error('Remove participant error:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to remove participant'
+      error: 'Failed to remove participant. Please try again.'
     });
   }
 });
