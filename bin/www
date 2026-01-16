@@ -25,6 +25,20 @@ app.set('port', port);
 var server = http.createServer(app);
 
 /**
+ * Initialize Socket.IO (if enabled)
+ */
+if (process.env.ENABLE_SOCKET_IO !== 'false') {
+  try {
+    var { initializeSocket } = require('../utils/socket');
+    var io = initializeSocket(server);
+    app.set('io', io); // Make io accessible in routes via req.app.get('io')
+    console.log('Socket.IO initialized');
+  } catch (error) {
+    console.warn('Socket.IO initialization failed (continuing without real-time updates):', error.message);
+  }
+}
+
+/**
  * Listen on provided port, on all network interfaces.
  */
 

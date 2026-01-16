@@ -15,6 +15,11 @@ var registerRouter = require('./routes/register');
 var toolReviewRouter = require('./routes/toolreview');
 var contactRouter = require('./routes/contact');
 var notesRouter = require('./routes/notes');
+var tripsRouter = require('./routes/trips');
+var participantsRouter = require('./routes/participants');
+var expensesRouter = require('./routes/expenses');
+var settlementRouter = require('./routes/settlement');
+var activityRouter = require('./routes/activity');
 var { connectDB } = require('./utils/db');
 
 // Connect to MongoDB on startup (for serverless, connection is cached)
@@ -51,6 +56,11 @@ app.use('/kuthera', registerRouter);
 app.use('/api/toolreview', toolReviewRouter);
 app.use('/api/contact', contactRouter);
 app.use('/api/notes', notesRouter);
+app.use('/api/trips', tripsRouter);
+app.use('/api/trips', participantsRouter);
+app.use('/api/trips', expensesRouter);
+app.use('/api/trips', settlementRouter);
+app.use('/api/trips', activityRouter);
 
 // catch 404 and forward to error handler
 app.use(function(req, res, next) {

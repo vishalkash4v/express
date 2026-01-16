@@ -2,16 +2,16 @@ var jwt = require('jsonwebtoken');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 
-// Generate JWT token
-function generateToken(admin) {
+// Generate JWT token (works for both admin and user)
+function generateToken(userOrAdmin) {
   return jwt.sign(
     {
-      id: admin._id,
-      username: admin.username,
-      role: admin.role
+      id: userOrAdmin._id || userOrAdmin.id,
+      username: userOrAdmin.username,
+      role: userOrAdmin.role || 'user'
     },
     JWT_SECRET,
-    { expiresIn: '24h' }
+    { expiresIn: '7d' } // 7 days for users, 24h for admin
   );
 }
 
@@ -27,14 +27,14 @@ function authenticateToken(req, res, next) {
     });
   }
 
-  jwt.verify(token, JWT_SECRET, (err, user) => {
+  jwt.verify(token, JWT_SECRET, (err, decoded) => {
     if (err) {
       return res.status(403).json({
         success: false,
         error: 'Invalid or expired token'
       });
     }
-    req.user = user;
+    req.user = decoded;
     next();
   });
 }

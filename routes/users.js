@@ -159,9 +159,18 @@ router.post('/login', async function(req, res) {
       });
     }
 
+    // Generate JWT token
+    const { generateToken } = require('../middleware/auth');
+    const token = generateToken({
+      _id: user._id,
+      username: user.username,
+      role: 'user'
+    });
+
     res.json({
       success: true,
       message: 'Login successful',
+      token: token,
       data: {
         userId: user._id,
         username: user.username,
