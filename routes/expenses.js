@@ -96,7 +96,7 @@ router.post('/:tripId/expenses', isTripMember, hasPermission(['ADD_EDIT', 'DELET
     
     // Handle validation errors
     if (error.name === 'ValidationError') {
-      const errors = Object.values(error.errors).map((e: any) => e.message);
+      const errors = Object.values(error.errors).map(function(e) { return e.message; });
       return res.status(400).json({
         success: false,
         error: errors.join(', ')
@@ -218,7 +218,7 @@ router.patch('/:tripId/expenses/:expenseId', isTripMember, hasPermission(['ADD_E
     
     // Handle validation errors
     if (error.name === 'ValidationError') {
-      const errors = Object.values(error.errors).map((e: any) => e.message);
+      const errors = Object.values(error.errors).map(function(e) { return e.message; });
       return res.status(400).json({
         success: false,
         error: errors.join(', ')

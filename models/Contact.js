@@ -8,7 +8,7 @@ var contactSchema = new mongoose.Schema({
   ipAddress: { type: String, default: null },
   userAgent: { type: String, default: null },
   status: { type: String, enum: ['new', 'read', 'replied', 'archived'], default: 'new' },
-  createdAt: { type: Date, default: Date.now, index: true }
+  createdAt: { type: Date, default: Date.now }
 }, {
   timestamps: true
 });

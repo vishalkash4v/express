@@ -4,26 +4,22 @@ var toolReviewSchema = new mongoose.Schema({
   toolName: {
     type: String,
     required: true,
-    trim: true,
-    index: true
+    trim: true
   },
   toolUrl: {
     type: String,
     required: true,
-    trim: true,
-    index: true
+    trim: true
   },
   rating: {
     type: Number,
     required: true,
-    enum: [0, 1], // 0 = dislike, 1 = like
-    index: true
+    enum: [0, 1] // 0 = dislike, 1 = like
   },
   ipAddress: {
     type: String,
     required: true,
-    trim: true,
-    index: true
+    trim: true
   },
   userAgent: {
     type: String,

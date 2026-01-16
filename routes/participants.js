@@ -137,7 +137,7 @@ router.post('/:tripId/participants', isTripMember, hasPermission(['ADMIN']), asy
 
     // Handle validation errors
     if (error.name === 'ValidationError') {
-      const errors = Object.values(error.errors).map((e: any) => e.message);
+      const errors = Object.values(error.errors).map(function(e) { return e.message; });
       return res.status(400).json({
         success: false,
         error: errors.join(', ')
@@ -231,7 +231,7 @@ router.patch('/:tripId/participants/:participantId', isTripMember, hasPermission
     
     // Handle validation errors
     if (error.name === 'ValidationError') {
-      const errors = Object.values(error.errors).map((e: any) => e.message);
+      const errors = Object.values(error.errors).map(function(e) { return e.message; });
       return res.status(400).json({
         success: false,
         error: errors.join(', ')
