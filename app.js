@@ -20,6 +20,7 @@ var participantsRouter = require('./routes/participants');
 var expensesRouter = require('./routes/expenses');
 var settlementRouter = require('./routes/settlement');
 var activityRouter = require('./routes/activity');
+var dummyapisRouter = require('./routes/apis/dummyapis.routes');
 var { connectDB } = require('./utils/db');
 
 // Connect to MongoDB on startup (for serverless, connection is cached)
@@ -61,6 +62,7 @@ app.use('/api/trips', participantsRouter);
 app.use('/api/trips', expensesRouter);
 app.use('/api/trips', settlementRouter);
 app.use('/api/trips', activityRouter);
+app.use('/apis/v2', dummyapisRouter);
 
 // catch 404 and forward to error handler
 app.use(function(req, res, next) {
