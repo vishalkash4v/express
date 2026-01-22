@@ -1,5 +1,7 @@
 var Account = require('../models/dummyapis.account');
 var User = require('../models/dummyapis.user');
+var Product = require('../models/dummyapis.product');
+var Cart = require('../models/dummyapis.cart');
 var { connectDB } = require('../utils/db');
 var { generateToken, authenticateToken } = require('../middleware/auth');
 var jwt = require('jsonwebtoken');
