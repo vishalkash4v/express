@@ -107,6 +107,811 @@ exports.register = async function(req, res) {
   }
 };
 
+// ========== PRODUCT ENDPOINTS ==========
+
+// Create product
+exports.createProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { name, description, price, category, stock, image, customFields } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Validation
+    if (!name || !name.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Product name is required'
+      });
+    }
+
+    if (price === undefined || price === null || price < 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid price is required'
+      });
+    }
+
+    // Create new product
+    const newProduct = new Product({
+      name: name.trim(),
+      description: description ? description.trim() : '',
+      price: parseFloat(price),
+      category: category ? category.trim() : '',
+      stock: stock !== undefined ? parseInt(stock) : 0,
+      image: image || null,
+      customFields: customFields || {},
+      createdBy: accountId,
+      status: 'active'
+    });
+
+    await newProduct.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Product created successfully',
+      data: {
+        id: newProduct._id,
+        name: newProduct.name,
+        description: newProduct.description,
+        price: newProduct.price,
+        category: newProduct.category,
+        stock: newProduct.stock,
+        image: newProduct.image,
+        status: newProduct.status,
+        customFields: newProduct.customFields,
+        createdAt: newProduct.createdAt
+      }
+    });
+  } catch (error) {
+    console.error('Create product error:', error);
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(function(e) { return e.message; });
+      return res.status(400).json({
+        success: false,
+        error: errors.join(', ')
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Get all products
+exports.getProducts = async function(req, res) {
+  try {
+    await connectDB();
+    
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const products = await Product.find({ createdBy: accountId })
+      .sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      data: products,
+      count: products.length
+    });
+  } catch (error) {
+    console.error('Get products error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Get single product
+exports.getProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: product
+    });
+  } catch (error) {
+    console.error('Get product error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Update product
+exports.updateProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+    const { name, description, price, category, stock, image, customFields } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find product and verify ownership
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    // Update fields
+    if (name) product.name = name.trim();
+    if (description !== undefined) product.description = description ? description.trim() : '';
+    if (price !== undefined) product.price = parseFloat(price);
+    if (category !== undefined) product.category = category ? category.trim() : '';
+    if (stock !== undefined) product.stock = parseInt(stock);
+    if (image !== undefined) product.image = image || null;
+    if (customFields) {
+      product.customFields = { ...product.customFields, ...customFields };
+    }
+
+    product.updatedAt = Date.now();
+    await product.save();
+
+    res.json({
+      success: true,
+      message: 'Product updated successfully',
+      data: product
+    });
+  } catch (error) {
+    console.error('Update product error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(function(e) { return e.message; });
+      return res.status(400).json({
+        success: false,
+        error: errors.join(', ')
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Delete product
+exports.deleteProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find product and verify ownership
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    await Product.deleteOne({ _id: id });
+
+    res.json({
+      success: true,
+      message: 'Product deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete product error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Update product status
+exports.updateProductStatus = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+    const { status } = req.body;
+
+    // Validate status
+    if (!status || !['active', 'inactive'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Status must be "active" or "inactive"'
+      });
+    }
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find product and verify ownership
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    product.status = status;
+    product.updatedAt = Date.now();
+    await product.save();
+
+    res.json({
+      success: true,
+      message: 'Product status updated successfully',
+      data: {
+        id: product._id,
+        status: product.status,
+        updatedAt: product.updatedAt
+      }
+    });
+  } catch (error) {
+    console.error('Update product status error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// ========== CART ENDPOINTS ==========
+
+// Add to cart
+exports.addToCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId, productId, quantity } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Validation
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: 'User ID is required'
+      });
+    }
+
+    if (!productId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Product ID is required'
+      });
+    }
+
+    // Verify user belongs to account
+    const user = await User.findOne({ _id: userId, createdBy: accountId });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    // Verify product belongs to account
+    const product = await Product.findOne({ _id: productId, createdBy: accountId });
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    // Find or create cart
+    let cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      cart = new Cart({
+        userId: userId,
+        items: [],
+        createdBy: accountId
+      });
+    }
+
+    // Check if product already in cart
+    const existingItemIndex = cart.items.findIndex(
+      function(item) { return item.productId.toString() === productId; }
+    );
+
+    const qty = quantity ? parseInt(quantity) : 1;
+
+    if (existingItemIndex >= 0) {
+      // Update quantity
+      cart.items[existingItemIndex].quantity += qty;
+    } else {
+      // Add new item
+      cart.items.push({
+        productId: productId,
+        quantity: qty,
+        price: product.price
+      });
+    }
+
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Item added to cart successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Add to cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID or product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Get cart
+exports.getCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Verify user belongs to account
+    const user = await User.findOne({ _id: userId, createdBy: accountId });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    let cart = await Cart.findOne({ userId: userId, createdBy: accountId })
+      .populate('items.productId');
+    
+    if (!cart) {
+      cart = {
+        userId: userId,
+        items: [],
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+    }
+
+    res.json({
+      success: true,
+      data: cart
+    });
+  } catch (error) {
+    console.error('Get cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Update cart item
+exports.updateCartItem = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId, productId } = req.params;
+    const { quantity } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    if (!quantity || quantity < 1) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid quantity is required'
+      });
+    }
+
+    const cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cart not found'
+      });
+    }
+
+    const itemIndex = cart.items.findIndex(
+      function(item) { return item.productId.toString() === productId; }
+    );
+
+    if (itemIndex < 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Item not found in cart'
+      });
+    }
+
+    cart.items[itemIndex].quantity = parseInt(quantity);
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Cart item updated successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Update cart item error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID or product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Remove from cart
+exports.removeFromCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId, productId } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cart not found'
+      });
+    }
+
+    cart.items = cart.items.filter(
+      function(item) { return item.productId.toString() !== productId; }
+    );
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Item removed from cart successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Remove from cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID or product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Clear cart
+exports.clearCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cart not found'
+      });
+    }
+
+    cart.items = [];
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Cart cleared successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Clear cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
 // Login - supports username/email/phone
 exports.login = async function(req, res) {
   try {
@@ -191,6 +996,1695 @@ exports.login = async function(req, res) {
     });
   } catch (error) {
     console.error('Login error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// ========== PRODUCT ENDPOINTS ==========
+
+// Create product
+exports.createProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { name, description, price, category, stock, image, customFields } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Validation
+    if (!name || !name.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Product name is required'
+      });
+    }
+
+    if (price === undefined || price === null || price < 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid price is required'
+      });
+    }
+
+    // Create new product
+    const newProduct = new Product({
+      name: name.trim(),
+      description: description ? description.trim() : '',
+      price: parseFloat(price),
+      category: category ? category.trim() : '',
+      stock: stock !== undefined ? parseInt(stock) : 0,
+      image: image || null,
+      customFields: customFields || {},
+      createdBy: accountId,
+      status: 'active'
+    });
+
+    await newProduct.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Product created successfully',
+      data: {
+        id: newProduct._id,
+        name: newProduct.name,
+        description: newProduct.description,
+        price: newProduct.price,
+        category: newProduct.category,
+        stock: newProduct.stock,
+        image: newProduct.image,
+        status: newProduct.status,
+        customFields: newProduct.customFields,
+        createdAt: newProduct.createdAt
+      }
+    });
+  } catch (error) {
+    console.error('Create product error:', error);
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(function(e) { return e.message; });
+      return res.status(400).json({
+        success: false,
+        error: errors.join(', ')
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Get all products
+exports.getProducts = async function(req, res) {
+  try {
+    await connectDB();
+    
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const products = await Product.find({ createdBy: accountId })
+      .sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      data: products,
+      count: products.length
+    });
+  } catch (error) {
+    console.error('Get products error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Get single product
+exports.getProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: product
+    });
+  } catch (error) {
+    console.error('Get product error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Update product
+exports.updateProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+    const { name, description, price, category, stock, image, customFields } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find product and verify ownership
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    // Update fields
+    if (name) product.name = name.trim();
+    if (description !== undefined) product.description = description ? description.trim() : '';
+    if (price !== undefined) product.price = parseFloat(price);
+    if (category !== undefined) product.category = category ? category.trim() : '';
+    if (stock !== undefined) product.stock = parseInt(stock);
+    if (image !== undefined) product.image = image || null;
+    if (customFields) {
+      product.customFields = { ...product.customFields, ...customFields };
+    }
+
+    product.updatedAt = Date.now();
+    await product.save();
+
+    res.json({
+      success: true,
+      message: 'Product updated successfully',
+      data: product
+    });
+  } catch (error) {
+    console.error('Update product error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(function(e) { return e.message; });
+      return res.status(400).json({
+        success: false,
+        error: errors.join(', ')
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Delete product
+exports.deleteProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find product and verify ownership
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    await Product.deleteOne({ _id: id });
+
+    res.json({
+      success: true,
+      message: 'Product deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete product error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Update product status
+exports.updateProductStatus = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+    const { status } = req.body;
+
+    // Validate status
+    if (!status || !['active', 'inactive'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Status must be "active" or "inactive"'
+      });
+    }
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find product and verify ownership
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    product.status = status;
+    product.updatedAt = Date.now();
+    await product.save();
+
+    res.json({
+      success: true,
+      message: 'Product status updated successfully',
+      data: {
+        id: product._id,
+        status: product.status,
+        updatedAt: product.updatedAt
+      }
+    });
+  } catch (error) {
+    console.error('Update product status error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// ========== CART ENDPOINTS ==========
+
+// Add to cart
+exports.addToCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId, productId, quantity } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Validation
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: 'User ID is required'
+      });
+    }
+
+    if (!productId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Product ID is required'
+      });
+    }
+
+    // Verify user belongs to account
+    const user = await User.findOne({ _id: userId, createdBy: accountId });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    // Verify product belongs to account
+    const product = await Product.findOne({ _id: productId, createdBy: accountId });
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    // Find or create cart
+    let cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      cart = new Cart({
+        userId: userId,
+        items: [],
+        createdBy: accountId
+      });
+    }
+
+    // Check if product already in cart
+    const existingItemIndex = cart.items.findIndex(
+      function(item) { return item.productId.toString() === productId; }
+    );
+
+    const qty = quantity ? parseInt(quantity) : 1;
+
+    if (existingItemIndex >= 0) {
+      // Update quantity
+      cart.items[existingItemIndex].quantity += qty;
+    } else {
+      // Add new item
+      cart.items.push({
+        productId: productId,
+        quantity: qty,
+        price: product.price
+      });
+    }
+
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Item added to cart successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Add to cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID or product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Get cart
+exports.getCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Verify user belongs to account
+    const user = await User.findOne({ _id: userId, createdBy: accountId });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    let cart = await Cart.findOne({ userId: userId, createdBy: accountId })
+      .populate('items.productId');
+    
+    if (!cart) {
+      cart = {
+        userId: userId,
+        items: [],
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+    }
+
+    res.json({
+      success: true,
+      data: cart
+    });
+  } catch (error) {
+    console.error('Get cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Update cart item
+exports.updateCartItem = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId, productId } = req.params;
+    const { quantity } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    if (!quantity || quantity < 1) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid quantity is required'
+      });
+    }
+
+    const cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cart not found'
+      });
+    }
+
+    const itemIndex = cart.items.findIndex(
+      function(item) { return item.productId.toString() === productId; }
+    );
+
+    if (itemIndex < 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Item not found in cart'
+      });
+    }
+
+    cart.items[itemIndex].quantity = parseInt(quantity);
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Cart item updated successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Update cart item error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID or product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Remove from cart
+exports.removeFromCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId, productId } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cart not found'
+      });
+    }
+
+    cart.items = cart.items.filter(
+      function(item) { return item.productId.toString() !== productId; }
+    );
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Item removed from cart successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Remove from cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID or product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Clear cart
+exports.clearCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cart not found'
+      });
+    }
+
+    cart.items = [];
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Cart cleared successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Clear cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Change password
+exports.changePassword = async function(req, res) {
+  try {
+    await connectDB();
+    const { currentPassword, newPassword } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find account
+    const account = await Account.findById(accountId);
+    if (!account) {
+      return res.status(404).json({
+        success: false,
+        error: 'Account not found'
+      });
+    }
+
+    // Validate input
+    if (!currentPassword) {
+      return res.status(400).json({
+        success: false,
+        error: 'Current password is required'
+      });
+    }
+
+    if (!newPassword || newPassword.trim().length < 6) {
+      return res.status(400).json({
+        success: false,
+        error: 'New password is required and must be at least 6 characters'
+      });
+    }
+
+    // Verify current password
+    const isPasswordValid = await account.comparePassword(currentPassword);
+    if (!isPasswordValid) {
+      return res.status(401).json({
+        success: false,
+        error: 'Current password is incorrect'
+      });
+    }
+
+    // Update password (will be hashed by pre-save hook)
+    account.passwordHash = newPassword;
+    await account.save();
+
+    res.json({
+      success: true,
+      message: 'Password changed successfully'
+    });
+  } catch (error) {
+    console.error('Change password error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// ========== PRODUCT ENDPOINTS ==========
+
+// Create product
+exports.createProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { name, description, price, category, stock, image, customFields } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Validation
+    if (!name || !name.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Product name is required'
+      });
+    }
+
+    if (price === undefined || price === null || price < 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid price is required'
+      });
+    }
+
+    // Create new product
+    const newProduct = new Product({
+      name: name.trim(),
+      description: description ? description.trim() : '',
+      price: parseFloat(price),
+      category: category ? category.trim() : '',
+      stock: stock !== undefined ? parseInt(stock) : 0,
+      image: image || null,
+      customFields: customFields || {},
+      createdBy: accountId,
+      status: 'active'
+    });
+
+    await newProduct.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Product created successfully',
+      data: {
+        id: newProduct._id,
+        name: newProduct.name,
+        description: newProduct.description,
+        price: newProduct.price,
+        category: newProduct.category,
+        stock: newProduct.stock,
+        image: newProduct.image,
+        status: newProduct.status,
+        customFields: newProduct.customFields,
+        createdAt: newProduct.createdAt
+      }
+    });
+  } catch (error) {
+    console.error('Create product error:', error);
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(function(e) { return e.message; });
+      return res.status(400).json({
+        success: false,
+        error: errors.join(', ')
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Get all products
+exports.getProducts = async function(req, res) {
+  try {
+    await connectDB();
+    
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const products = await Product.find({ createdBy: accountId })
+      .sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      data: products,
+      count: products.length
+    });
+  } catch (error) {
+    console.error('Get products error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Get single product
+exports.getProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: product
+    });
+  } catch (error) {
+    console.error('Get product error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Update product
+exports.updateProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+    const { name, description, price, category, stock, image, customFields } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find product and verify ownership
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    // Update fields
+    if (name) product.name = name.trim();
+    if (description !== undefined) product.description = description ? description.trim() : '';
+    if (price !== undefined) product.price = parseFloat(price);
+    if (category !== undefined) product.category = category ? category.trim() : '';
+    if (stock !== undefined) product.stock = parseInt(stock);
+    if (image !== undefined) product.image = image || null;
+    if (customFields) {
+      product.customFields = { ...product.customFields, ...customFields };
+    }
+
+    product.updatedAt = Date.now();
+    await product.save();
+
+    res.json({
+      success: true,
+      message: 'Product updated successfully',
+      data: product
+    });
+  } catch (error) {
+    console.error('Update product error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(function(e) { return e.message; });
+      return res.status(400).json({
+        success: false,
+        error: errors.join(', ')
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Delete product
+exports.deleteProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find product and verify ownership
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    await Product.deleteOne({ _id: id });
+
+    res.json({
+      success: true,
+      message: 'Product deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete product error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Update product status
+exports.updateProductStatus = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+    const { status } = req.body;
+
+    // Validate status
+    if (!status || !['active', 'inactive'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Status must be "active" or "inactive"'
+      });
+    }
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find product and verify ownership
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    product.status = status;
+    product.updatedAt = Date.now();
+    await product.save();
+
+    res.json({
+      success: true,
+      message: 'Product status updated successfully',
+      data: {
+        id: product._id,
+        status: product.status,
+        updatedAt: product.updatedAt
+      }
+    });
+  } catch (error) {
+    console.error('Update product status error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// ========== CART ENDPOINTS ==========
+
+// Add to cart
+exports.addToCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId, productId, quantity } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Validation
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: 'User ID is required'
+      });
+    }
+
+    if (!productId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Product ID is required'
+      });
+    }
+
+    // Verify user belongs to account
+    const user = await User.findOne({ _id: userId, createdBy: accountId });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    // Verify product belongs to account
+    const product = await Product.findOne({ _id: productId, createdBy: accountId });
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    // Find or create cart
+    let cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      cart = new Cart({
+        userId: userId,
+        items: [],
+        createdBy: accountId
+      });
+    }
+
+    // Check if product already in cart
+    const existingItemIndex = cart.items.findIndex(
+      function(item) { return item.productId.toString() === productId; }
+    );
+
+    const qty = quantity ? parseInt(quantity) : 1;
+
+    if (existingItemIndex >= 0) {
+      // Update quantity
+      cart.items[existingItemIndex].quantity += qty;
+    } else {
+      // Add new item
+      cart.items.push({
+        productId: productId,
+        quantity: qty,
+        price: product.price
+      });
+    }
+
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Item added to cart successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Add to cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID or product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Get cart
+exports.getCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Verify user belongs to account
+    const user = await User.findOne({ _id: userId, createdBy: accountId });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    let cart = await Cart.findOne({ userId: userId, createdBy: accountId })
+      .populate('items.productId');
+    
+    if (!cart) {
+      cart = {
+        userId: userId,
+        items: [],
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+    }
+
+    res.json({
+      success: true,
+      data: cart
+    });
+  } catch (error) {
+    console.error('Get cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Update cart item
+exports.updateCartItem = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId, productId } = req.params;
+    const { quantity } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    if (!quantity || quantity < 1) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid quantity is required'
+      });
+    }
+
+    const cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cart not found'
+      });
+    }
+
+    const itemIndex = cart.items.findIndex(
+      function(item) { return item.productId.toString() === productId; }
+    );
+
+    if (itemIndex < 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Item not found in cart'
+      });
+    }
+
+    cart.items[itemIndex].quantity = parseInt(quantity);
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Cart item updated successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Update cart item error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID or product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Remove from cart
+exports.removeFromCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId, productId } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cart not found'
+      });
+    }
+
+    cart.items = cart.items.filter(
+      function(item) { return item.productId.toString() !== productId; }
+    );
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Item removed from cart successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Remove from cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID or product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Clear cart
+exports.clearCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cart not found'
+      });
+    }
+
+    cart.items = [];
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Cart cleared successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Clear cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID'
+      });
+    }
     res.status(500).json({
       success: false,
       error: 'Internal server error'
@@ -337,6 +2831,811 @@ exports.createUser = async function(req, res) {
   }
 };
 
+// ========== PRODUCT ENDPOINTS ==========
+
+// Create product
+exports.createProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { name, description, price, category, stock, image, customFields } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Validation
+    if (!name || !name.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Product name is required'
+      });
+    }
+
+    if (price === undefined || price === null || price < 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid price is required'
+      });
+    }
+
+    // Create new product
+    const newProduct = new Product({
+      name: name.trim(),
+      description: description ? description.trim() : '',
+      price: parseFloat(price),
+      category: category ? category.trim() : '',
+      stock: stock !== undefined ? parseInt(stock) : 0,
+      image: image || null,
+      customFields: customFields || {},
+      createdBy: accountId,
+      status: 'active'
+    });
+
+    await newProduct.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Product created successfully',
+      data: {
+        id: newProduct._id,
+        name: newProduct.name,
+        description: newProduct.description,
+        price: newProduct.price,
+        category: newProduct.category,
+        stock: newProduct.stock,
+        image: newProduct.image,
+        status: newProduct.status,
+        customFields: newProduct.customFields,
+        createdAt: newProduct.createdAt
+      }
+    });
+  } catch (error) {
+    console.error('Create product error:', error);
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(function(e) { return e.message; });
+      return res.status(400).json({
+        success: false,
+        error: errors.join(', ')
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Get all products
+exports.getProducts = async function(req, res) {
+  try {
+    await connectDB();
+    
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const products = await Product.find({ createdBy: accountId })
+      .sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      data: products,
+      count: products.length
+    });
+  } catch (error) {
+    console.error('Get products error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Get single product
+exports.getProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: product
+    });
+  } catch (error) {
+    console.error('Get product error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Update product
+exports.updateProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+    const { name, description, price, category, stock, image, customFields } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find product and verify ownership
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    // Update fields
+    if (name) product.name = name.trim();
+    if (description !== undefined) product.description = description ? description.trim() : '';
+    if (price !== undefined) product.price = parseFloat(price);
+    if (category !== undefined) product.category = category ? category.trim() : '';
+    if (stock !== undefined) product.stock = parseInt(stock);
+    if (image !== undefined) product.image = image || null;
+    if (customFields) {
+      product.customFields = { ...product.customFields, ...customFields };
+    }
+
+    product.updatedAt = Date.now();
+    await product.save();
+
+    res.json({
+      success: true,
+      message: 'Product updated successfully',
+      data: product
+    });
+  } catch (error) {
+    console.error('Update product error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(function(e) { return e.message; });
+      return res.status(400).json({
+        success: false,
+        error: errors.join(', ')
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Delete product
+exports.deleteProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find product and verify ownership
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    await Product.deleteOne({ _id: id });
+
+    res.json({
+      success: true,
+      message: 'Product deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete product error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Update product status
+exports.updateProductStatus = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+    const { status } = req.body;
+
+    // Validate status
+    if (!status || !['active', 'inactive'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Status must be "active" or "inactive"'
+      });
+    }
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find product and verify ownership
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    product.status = status;
+    product.updatedAt = Date.now();
+    await product.save();
+
+    res.json({
+      success: true,
+      message: 'Product status updated successfully',
+      data: {
+        id: product._id,
+        status: product.status,
+        updatedAt: product.updatedAt
+      }
+    });
+  } catch (error) {
+    console.error('Update product status error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// ========== CART ENDPOINTS ==========
+
+// Add to cart
+exports.addToCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId, productId, quantity } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Validation
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: 'User ID is required'
+      });
+    }
+
+    if (!productId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Product ID is required'
+      });
+    }
+
+    // Verify user belongs to account
+    const user = await User.findOne({ _id: userId, createdBy: accountId });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    // Verify product belongs to account
+    const product = await Product.findOne({ _id: productId, createdBy: accountId });
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    // Find or create cart
+    let cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      cart = new Cart({
+        userId: userId,
+        items: [],
+        createdBy: accountId
+      });
+    }
+
+    // Check if product already in cart
+    const existingItemIndex = cart.items.findIndex(
+      function(item) { return item.productId.toString() === productId; }
+    );
+
+    const qty = quantity ? parseInt(quantity) : 1;
+
+    if (existingItemIndex >= 0) {
+      // Update quantity
+      cart.items[existingItemIndex].quantity += qty;
+    } else {
+      // Add new item
+      cart.items.push({
+        productId: productId,
+        quantity: qty,
+        price: product.price
+      });
+    }
+
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Item added to cart successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Add to cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID or product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Get cart
+exports.getCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Verify user belongs to account
+    const user = await User.findOne({ _id: userId, createdBy: accountId });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    let cart = await Cart.findOne({ userId: userId, createdBy: accountId })
+      .populate('items.productId');
+    
+    if (!cart) {
+      cart = {
+        userId: userId,
+        items: [],
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+    }
+
+    res.json({
+      success: true,
+      data: cart
+    });
+  } catch (error) {
+    console.error('Get cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Update cart item
+exports.updateCartItem = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId, productId } = req.params;
+    const { quantity } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    if (!quantity || quantity < 1) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid quantity is required'
+      });
+    }
+
+    const cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cart not found'
+      });
+    }
+
+    const itemIndex = cart.items.findIndex(
+      function(item) { return item.productId.toString() === productId; }
+    );
+
+    if (itemIndex < 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Item not found in cart'
+      });
+    }
+
+    cart.items[itemIndex].quantity = parseInt(quantity);
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Cart item updated successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Update cart item error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID or product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Remove from cart
+exports.removeFromCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId, productId } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cart not found'
+      });
+    }
+
+    cart.items = cart.items.filter(
+      function(item) { return item.productId.toString() !== productId; }
+    );
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Item removed from cart successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Remove from cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID or product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Clear cart
+exports.clearCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cart not found'
+      });
+    }
+
+    cart.items = [];
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Cart cleared successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Clear cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
 // Get all users (for the account)
 exports.getUsers = async function(req, res) {
   try {
@@ -376,6 +3675,811 @@ exports.getUsers = async function(req, res) {
     });
   } catch (error) {
     console.error('Get users error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// ========== PRODUCT ENDPOINTS ==========
+
+// Create product
+exports.createProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { name, description, price, category, stock, image, customFields } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Validation
+    if (!name || !name.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Product name is required'
+      });
+    }
+
+    if (price === undefined || price === null || price < 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid price is required'
+      });
+    }
+
+    // Create new product
+    const newProduct = new Product({
+      name: name.trim(),
+      description: description ? description.trim() : '',
+      price: parseFloat(price),
+      category: category ? category.trim() : '',
+      stock: stock !== undefined ? parseInt(stock) : 0,
+      image: image || null,
+      customFields: customFields || {},
+      createdBy: accountId,
+      status: 'active'
+    });
+
+    await newProduct.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Product created successfully',
+      data: {
+        id: newProduct._id,
+        name: newProduct.name,
+        description: newProduct.description,
+        price: newProduct.price,
+        category: newProduct.category,
+        stock: newProduct.stock,
+        image: newProduct.image,
+        status: newProduct.status,
+        customFields: newProduct.customFields,
+        createdAt: newProduct.createdAt
+      }
+    });
+  } catch (error) {
+    console.error('Create product error:', error);
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(function(e) { return e.message; });
+      return res.status(400).json({
+        success: false,
+        error: errors.join(', ')
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Get all products
+exports.getProducts = async function(req, res) {
+  try {
+    await connectDB();
+    
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const products = await Product.find({ createdBy: accountId })
+      .sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      data: products,
+      count: products.length
+    });
+  } catch (error) {
+    console.error('Get products error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Get single product
+exports.getProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: product
+    });
+  } catch (error) {
+    console.error('Get product error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Update product
+exports.updateProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+    const { name, description, price, category, stock, image, customFields } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find product and verify ownership
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    // Update fields
+    if (name) product.name = name.trim();
+    if (description !== undefined) product.description = description ? description.trim() : '';
+    if (price !== undefined) product.price = parseFloat(price);
+    if (category !== undefined) product.category = category ? category.trim() : '';
+    if (stock !== undefined) product.stock = parseInt(stock);
+    if (image !== undefined) product.image = image || null;
+    if (customFields) {
+      product.customFields = { ...product.customFields, ...customFields };
+    }
+
+    product.updatedAt = Date.now();
+    await product.save();
+
+    res.json({
+      success: true,
+      message: 'Product updated successfully',
+      data: product
+    });
+  } catch (error) {
+    console.error('Update product error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(function(e) { return e.message; });
+      return res.status(400).json({
+        success: false,
+        error: errors.join(', ')
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Delete product
+exports.deleteProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find product and verify ownership
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    await Product.deleteOne({ _id: id });
+
+    res.json({
+      success: true,
+      message: 'Product deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete product error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Update product status
+exports.updateProductStatus = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+    const { status } = req.body;
+
+    // Validate status
+    if (!status || !['active', 'inactive'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Status must be "active" or "inactive"'
+      });
+    }
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find product and verify ownership
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    product.status = status;
+    product.updatedAt = Date.now();
+    await product.save();
+
+    res.json({
+      success: true,
+      message: 'Product status updated successfully',
+      data: {
+        id: product._id,
+        status: product.status,
+        updatedAt: product.updatedAt
+      }
+    });
+  } catch (error) {
+    console.error('Update product status error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// ========== CART ENDPOINTS ==========
+
+// Add to cart
+exports.addToCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId, productId, quantity } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Validation
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: 'User ID is required'
+      });
+    }
+
+    if (!productId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Product ID is required'
+      });
+    }
+
+    // Verify user belongs to account
+    const user = await User.findOne({ _id: userId, createdBy: accountId });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    // Verify product belongs to account
+    const product = await Product.findOne({ _id: productId, createdBy: accountId });
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    // Find or create cart
+    let cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      cart = new Cart({
+        userId: userId,
+        items: [],
+        createdBy: accountId
+      });
+    }
+
+    // Check if product already in cart
+    const existingItemIndex = cart.items.findIndex(
+      function(item) { return item.productId.toString() === productId; }
+    );
+
+    const qty = quantity ? parseInt(quantity) : 1;
+
+    if (existingItemIndex >= 0) {
+      // Update quantity
+      cart.items[existingItemIndex].quantity += qty;
+    } else {
+      // Add new item
+      cart.items.push({
+        productId: productId,
+        quantity: qty,
+        price: product.price
+      });
+    }
+
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Item added to cart successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Add to cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID or product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Get cart
+exports.getCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Verify user belongs to account
+    const user = await User.findOne({ _id: userId, createdBy: accountId });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    let cart = await Cart.findOne({ userId: userId, createdBy: accountId })
+      .populate('items.productId');
+    
+    if (!cart) {
+      cart = {
+        userId: userId,
+        items: [],
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+    }
+
+    res.json({
+      success: true,
+      data: cart
+    });
+  } catch (error) {
+    console.error('Get cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Update cart item
+exports.updateCartItem = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId, productId } = req.params;
+    const { quantity } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    if (!quantity || quantity < 1) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid quantity is required'
+      });
+    }
+
+    const cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cart not found'
+      });
+    }
+
+    const itemIndex = cart.items.findIndex(
+      function(item) { return item.productId.toString() === productId; }
+    );
+
+    if (itemIndex < 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Item not found in cart'
+      });
+    }
+
+    cart.items[itemIndex].quantity = parseInt(quantity);
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Cart item updated successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Update cart item error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID or product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Remove from cart
+exports.removeFromCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId, productId } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cart not found'
+      });
+    }
+
+    cart.items = cart.items.filter(
+      function(item) { return item.productId.toString() !== productId; }
+    );
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Item removed from cart successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Remove from cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID or product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Clear cart
+exports.clearCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cart not found'
+      });
+    }
+
+    cart.items = [];
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Cart cleared successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Clear cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID'
+      });
+    }
     res.status(500).json({
       success: false,
       error: 'Internal server error'
@@ -433,6 +4537,811 @@ exports.getMyUser = async function(req, res) {
     });
   } catch (error) {
     console.error('Get my user error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// ========== PRODUCT ENDPOINTS ==========
+
+// Create product
+exports.createProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { name, description, price, category, stock, image, customFields } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Validation
+    if (!name || !name.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Product name is required'
+      });
+    }
+
+    if (price === undefined || price === null || price < 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid price is required'
+      });
+    }
+
+    // Create new product
+    const newProduct = new Product({
+      name: name.trim(),
+      description: description ? description.trim() : '',
+      price: parseFloat(price),
+      category: category ? category.trim() : '',
+      stock: stock !== undefined ? parseInt(stock) : 0,
+      image: image || null,
+      customFields: customFields || {},
+      createdBy: accountId,
+      status: 'active'
+    });
+
+    await newProduct.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Product created successfully',
+      data: {
+        id: newProduct._id,
+        name: newProduct.name,
+        description: newProduct.description,
+        price: newProduct.price,
+        category: newProduct.category,
+        stock: newProduct.stock,
+        image: newProduct.image,
+        status: newProduct.status,
+        customFields: newProduct.customFields,
+        createdAt: newProduct.createdAt
+      }
+    });
+  } catch (error) {
+    console.error('Create product error:', error);
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(function(e) { return e.message; });
+      return res.status(400).json({
+        success: false,
+        error: errors.join(', ')
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Get all products
+exports.getProducts = async function(req, res) {
+  try {
+    await connectDB();
+    
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const products = await Product.find({ createdBy: accountId })
+      .sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      data: products,
+      count: products.length
+    });
+  } catch (error) {
+    console.error('Get products error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Get single product
+exports.getProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: product
+    });
+  } catch (error) {
+    console.error('Get product error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Update product
+exports.updateProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+    const { name, description, price, category, stock, image, customFields } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find product and verify ownership
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    // Update fields
+    if (name) product.name = name.trim();
+    if (description !== undefined) product.description = description ? description.trim() : '';
+    if (price !== undefined) product.price = parseFloat(price);
+    if (category !== undefined) product.category = category ? category.trim() : '';
+    if (stock !== undefined) product.stock = parseInt(stock);
+    if (image !== undefined) product.image = image || null;
+    if (customFields) {
+      product.customFields = { ...product.customFields, ...customFields };
+    }
+
+    product.updatedAt = Date.now();
+    await product.save();
+
+    res.json({
+      success: true,
+      message: 'Product updated successfully',
+      data: product
+    });
+  } catch (error) {
+    console.error('Update product error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(function(e) { return e.message; });
+      return res.status(400).json({
+        success: false,
+        error: errors.join(', ')
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Delete product
+exports.deleteProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find product and verify ownership
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    await Product.deleteOne({ _id: id });
+
+    res.json({
+      success: true,
+      message: 'Product deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete product error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Update product status
+exports.updateProductStatus = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+    const { status } = req.body;
+
+    // Validate status
+    if (!status || !['active', 'inactive'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Status must be "active" or "inactive"'
+      });
+    }
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find product and verify ownership
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    product.status = status;
+    product.updatedAt = Date.now();
+    await product.save();
+
+    res.json({
+      success: true,
+      message: 'Product status updated successfully',
+      data: {
+        id: product._id,
+        status: product.status,
+        updatedAt: product.updatedAt
+      }
+    });
+  } catch (error) {
+    console.error('Update product status error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// ========== CART ENDPOINTS ==========
+
+// Add to cart
+exports.addToCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId, productId, quantity } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Validation
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: 'User ID is required'
+      });
+    }
+
+    if (!productId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Product ID is required'
+      });
+    }
+
+    // Verify user belongs to account
+    const user = await User.findOne({ _id: userId, createdBy: accountId });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    // Verify product belongs to account
+    const product = await Product.findOne({ _id: productId, createdBy: accountId });
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    // Find or create cart
+    let cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      cart = new Cart({
+        userId: userId,
+        items: [],
+        createdBy: accountId
+      });
+    }
+
+    // Check if product already in cart
+    const existingItemIndex = cart.items.findIndex(
+      function(item) { return item.productId.toString() === productId; }
+    );
+
+    const qty = quantity ? parseInt(quantity) : 1;
+
+    if (existingItemIndex >= 0) {
+      // Update quantity
+      cart.items[existingItemIndex].quantity += qty;
+    } else {
+      // Add new item
+      cart.items.push({
+        productId: productId,
+        quantity: qty,
+        price: product.price
+      });
+    }
+
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Item added to cart successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Add to cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID or product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Get cart
+exports.getCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Verify user belongs to account
+    const user = await User.findOne({ _id: userId, createdBy: accountId });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    let cart = await Cart.findOne({ userId: userId, createdBy: accountId })
+      .populate('items.productId');
+    
+    if (!cart) {
+      cart = {
+        userId: userId,
+        items: [],
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+    }
+
+    res.json({
+      success: true,
+      data: cart
+    });
+  } catch (error) {
+    console.error('Get cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Update cart item
+exports.updateCartItem = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId, productId } = req.params;
+    const { quantity } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    if (!quantity || quantity < 1) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid quantity is required'
+      });
+    }
+
+    const cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cart not found'
+      });
+    }
+
+    const itemIndex = cart.items.findIndex(
+      function(item) { return item.productId.toString() === productId; }
+    );
+
+    if (itemIndex < 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Item not found in cart'
+      });
+    }
+
+    cart.items[itemIndex].quantity = parseInt(quantity);
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Cart item updated successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Update cart item error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID or product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Remove from cart
+exports.removeFromCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId, productId } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cart not found'
+      });
+    }
+
+    cart.items = cart.items.filter(
+      function(item) { return item.productId.toString() !== productId; }
+    );
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Item removed from cart successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Remove from cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID or product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Clear cart
+exports.clearCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cart not found'
+      });
+    }
+
+    cart.items = [];
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Cart cleared successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Clear cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID'
+      });
+    }
     res.status(500).json({
       success: false,
       error: 'Internal server error'
@@ -581,6 +5490,811 @@ exports.updateUser = async function(req, res) {
   }
 };
 
+// ========== PRODUCT ENDPOINTS ==========
+
+// Create product
+exports.createProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { name, description, price, category, stock, image, customFields } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Validation
+    if (!name || !name.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Product name is required'
+      });
+    }
+
+    if (price === undefined || price === null || price < 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid price is required'
+      });
+    }
+
+    // Create new product
+    const newProduct = new Product({
+      name: name.trim(),
+      description: description ? description.trim() : '',
+      price: parseFloat(price),
+      category: category ? category.trim() : '',
+      stock: stock !== undefined ? parseInt(stock) : 0,
+      image: image || null,
+      customFields: customFields || {},
+      createdBy: accountId,
+      status: 'active'
+    });
+
+    await newProduct.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Product created successfully',
+      data: {
+        id: newProduct._id,
+        name: newProduct.name,
+        description: newProduct.description,
+        price: newProduct.price,
+        category: newProduct.category,
+        stock: newProduct.stock,
+        image: newProduct.image,
+        status: newProduct.status,
+        customFields: newProduct.customFields,
+        createdAt: newProduct.createdAt
+      }
+    });
+  } catch (error) {
+    console.error('Create product error:', error);
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(function(e) { return e.message; });
+      return res.status(400).json({
+        success: false,
+        error: errors.join(', ')
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Get all products
+exports.getProducts = async function(req, res) {
+  try {
+    await connectDB();
+    
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const products = await Product.find({ createdBy: accountId })
+      .sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      data: products,
+      count: products.length
+    });
+  } catch (error) {
+    console.error('Get products error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Get single product
+exports.getProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: product
+    });
+  } catch (error) {
+    console.error('Get product error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Update product
+exports.updateProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+    const { name, description, price, category, stock, image, customFields } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find product and verify ownership
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    // Update fields
+    if (name) product.name = name.trim();
+    if (description !== undefined) product.description = description ? description.trim() : '';
+    if (price !== undefined) product.price = parseFloat(price);
+    if (category !== undefined) product.category = category ? category.trim() : '';
+    if (stock !== undefined) product.stock = parseInt(stock);
+    if (image !== undefined) product.image = image || null;
+    if (customFields) {
+      product.customFields = { ...product.customFields, ...customFields };
+    }
+
+    product.updatedAt = Date.now();
+    await product.save();
+
+    res.json({
+      success: true,
+      message: 'Product updated successfully',
+      data: product
+    });
+  } catch (error) {
+    console.error('Update product error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(function(e) { return e.message; });
+      return res.status(400).json({
+        success: false,
+        error: errors.join(', ')
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Delete product
+exports.deleteProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find product and verify ownership
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    await Product.deleteOne({ _id: id });
+
+    res.json({
+      success: true,
+      message: 'Product deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete product error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Update product status
+exports.updateProductStatus = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+    const { status } = req.body;
+
+    // Validate status
+    if (!status || !['active', 'inactive'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Status must be "active" or "inactive"'
+      });
+    }
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find product and verify ownership
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    product.status = status;
+    product.updatedAt = Date.now();
+    await product.save();
+
+    res.json({
+      success: true,
+      message: 'Product status updated successfully',
+      data: {
+        id: product._id,
+        status: product.status,
+        updatedAt: product.updatedAt
+      }
+    });
+  } catch (error) {
+    console.error('Update product status error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// ========== CART ENDPOINTS ==========
+
+// Add to cart
+exports.addToCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId, productId, quantity } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Validation
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: 'User ID is required'
+      });
+    }
+
+    if (!productId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Product ID is required'
+      });
+    }
+
+    // Verify user belongs to account
+    const user = await User.findOne({ _id: userId, createdBy: accountId });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    // Verify product belongs to account
+    const product = await Product.findOne({ _id: productId, createdBy: accountId });
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    // Find or create cart
+    let cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      cart = new Cart({
+        userId: userId,
+        items: [],
+        createdBy: accountId
+      });
+    }
+
+    // Check if product already in cart
+    const existingItemIndex = cart.items.findIndex(
+      function(item) { return item.productId.toString() === productId; }
+    );
+
+    const qty = quantity ? parseInt(quantity) : 1;
+
+    if (existingItemIndex >= 0) {
+      // Update quantity
+      cart.items[existingItemIndex].quantity += qty;
+    } else {
+      // Add new item
+      cart.items.push({
+        productId: productId,
+        quantity: qty,
+        price: product.price
+      });
+    }
+
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Item added to cart successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Add to cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID or product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Get cart
+exports.getCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Verify user belongs to account
+    const user = await User.findOne({ _id: userId, createdBy: accountId });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    let cart = await Cart.findOne({ userId: userId, createdBy: accountId })
+      .populate('items.productId');
+    
+    if (!cart) {
+      cart = {
+        userId: userId,
+        items: [],
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+    }
+
+    res.json({
+      success: true,
+      data: cart
+    });
+  } catch (error) {
+    console.error('Get cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Update cart item
+exports.updateCartItem = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId, productId } = req.params;
+    const { quantity } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    if (!quantity || quantity < 1) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid quantity is required'
+      });
+    }
+
+    const cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cart not found'
+      });
+    }
+
+    const itemIndex = cart.items.findIndex(
+      function(item) { return item.productId.toString() === productId; }
+    );
+
+    if (itemIndex < 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Item not found in cart'
+      });
+    }
+
+    cart.items[itemIndex].quantity = parseInt(quantity);
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Cart item updated successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Update cart item error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID or product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Remove from cart
+exports.removeFromCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId, productId } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cart not found'
+      });
+    }
+
+    cart.items = cart.items.filter(
+      function(item) { return item.productId.toString() !== productId; }
+    );
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Item removed from cart successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Remove from cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID or product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Clear cart
+exports.clearCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cart not found'
+      });
+    }
+
+    cart.items = [];
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Cart cleared successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Clear cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
 // Delete user
 exports.deleteUser = async function(req, res) {
   try {
@@ -628,6 +6342,811 @@ exports.deleteUser = async function(req, res) {
     });
   } catch (error) {
     console.error('Delete user error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// ========== PRODUCT ENDPOINTS ==========
+
+// Create product
+exports.createProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { name, description, price, category, stock, image, customFields } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Validation
+    if (!name || !name.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Product name is required'
+      });
+    }
+
+    if (price === undefined || price === null || price < 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid price is required'
+      });
+    }
+
+    // Create new product
+    const newProduct = new Product({
+      name: name.trim(),
+      description: description ? description.trim() : '',
+      price: parseFloat(price),
+      category: category ? category.trim() : '',
+      stock: stock !== undefined ? parseInt(stock) : 0,
+      image: image || null,
+      customFields: customFields || {},
+      createdBy: accountId,
+      status: 'active'
+    });
+
+    await newProduct.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Product created successfully',
+      data: {
+        id: newProduct._id,
+        name: newProduct.name,
+        description: newProduct.description,
+        price: newProduct.price,
+        category: newProduct.category,
+        stock: newProduct.stock,
+        image: newProduct.image,
+        status: newProduct.status,
+        customFields: newProduct.customFields,
+        createdAt: newProduct.createdAt
+      }
+    });
+  } catch (error) {
+    console.error('Create product error:', error);
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(function(e) { return e.message; });
+      return res.status(400).json({
+        success: false,
+        error: errors.join(', ')
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Get all products
+exports.getProducts = async function(req, res) {
+  try {
+    await connectDB();
+    
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const products = await Product.find({ createdBy: accountId })
+      .sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      data: products,
+      count: products.length
+    });
+  } catch (error) {
+    console.error('Get products error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Get single product
+exports.getProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: product
+    });
+  } catch (error) {
+    console.error('Get product error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Update product
+exports.updateProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+    const { name, description, price, category, stock, image, customFields } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find product and verify ownership
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    // Update fields
+    if (name) product.name = name.trim();
+    if (description !== undefined) product.description = description ? description.trim() : '';
+    if (price !== undefined) product.price = parseFloat(price);
+    if (category !== undefined) product.category = category ? category.trim() : '';
+    if (stock !== undefined) product.stock = parseInt(stock);
+    if (image !== undefined) product.image = image || null;
+    if (customFields) {
+      product.customFields = { ...product.customFields, ...customFields };
+    }
+
+    product.updatedAt = Date.now();
+    await product.save();
+
+    res.json({
+      success: true,
+      message: 'Product updated successfully',
+      data: product
+    });
+  } catch (error) {
+    console.error('Update product error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(function(e) { return e.message; });
+      return res.status(400).json({
+        success: false,
+        error: errors.join(', ')
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Delete product
+exports.deleteProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find product and verify ownership
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    await Product.deleteOne({ _id: id });
+
+    res.json({
+      success: true,
+      message: 'Product deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete product error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Update product status
+exports.updateProductStatus = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+    const { status } = req.body;
+
+    // Validate status
+    if (!status || !['active', 'inactive'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Status must be "active" or "inactive"'
+      });
+    }
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find product and verify ownership
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    product.status = status;
+    product.updatedAt = Date.now();
+    await product.save();
+
+    res.json({
+      success: true,
+      message: 'Product status updated successfully',
+      data: {
+        id: product._id,
+        status: product.status,
+        updatedAt: product.updatedAt
+      }
+    });
+  } catch (error) {
+    console.error('Update product status error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// ========== CART ENDPOINTS ==========
+
+// Add to cart
+exports.addToCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId, productId, quantity } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Validation
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: 'User ID is required'
+      });
+    }
+
+    if (!productId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Product ID is required'
+      });
+    }
+
+    // Verify user belongs to account
+    const user = await User.findOne({ _id: userId, createdBy: accountId });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    // Verify product belongs to account
+    const product = await Product.findOne({ _id: productId, createdBy: accountId });
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    // Find or create cart
+    let cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      cart = new Cart({
+        userId: userId,
+        items: [],
+        createdBy: accountId
+      });
+    }
+
+    // Check if product already in cart
+    const existingItemIndex = cart.items.findIndex(
+      function(item) { return item.productId.toString() === productId; }
+    );
+
+    const qty = quantity ? parseInt(quantity) : 1;
+
+    if (existingItemIndex >= 0) {
+      // Update quantity
+      cart.items[existingItemIndex].quantity += qty;
+    } else {
+      // Add new item
+      cart.items.push({
+        productId: productId,
+        quantity: qty,
+        price: product.price
+      });
+    }
+
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Item added to cart successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Add to cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID or product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Get cart
+exports.getCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Verify user belongs to account
+    const user = await User.findOne({ _id: userId, createdBy: accountId });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    let cart = await Cart.findOne({ userId: userId, createdBy: accountId })
+      .populate('items.productId');
+    
+    if (!cart) {
+      cart = {
+        userId: userId,
+        items: [],
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+    }
+
+    res.json({
+      success: true,
+      data: cart
+    });
+  } catch (error) {
+    console.error('Get cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Update cart item
+exports.updateCartItem = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId, productId } = req.params;
+    const { quantity } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    if (!quantity || quantity < 1) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid quantity is required'
+      });
+    }
+
+    const cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cart not found'
+      });
+    }
+
+    const itemIndex = cart.items.findIndex(
+      function(item) { return item.productId.toString() === productId; }
+    );
+
+    if (itemIndex < 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Item not found in cart'
+      });
+    }
+
+    cart.items[itemIndex].quantity = parseInt(quantity);
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Cart item updated successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Update cart item error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID or product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Remove from cart
+exports.removeFromCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId, productId } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cart not found'
+      });
+    }
+
+    cart.items = cart.items.filter(
+      function(item) { return item.productId.toString() !== productId; }
+    );
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Item removed from cart successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Remove from cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID or product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Clear cart
+exports.clearCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cart not found'
+      });
+    }
+
+    cart.items = [];
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Cart cleared successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Clear cart error:', error);
     if (error.name === 'CastError') {
       return res.status(400).json({
         success: false,
@@ -704,6 +7223,811 @@ exports.updateUserStatus = async function(req, res) {
     });
   } catch (error) {
     console.error('Update user status error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// ========== PRODUCT ENDPOINTS ==========
+
+// Create product
+exports.createProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { name, description, price, category, stock, image, customFields } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Validation
+    if (!name || !name.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Product name is required'
+      });
+    }
+
+    if (price === undefined || price === null || price < 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid price is required'
+      });
+    }
+
+    // Create new product
+    const newProduct = new Product({
+      name: name.trim(),
+      description: description ? description.trim() : '',
+      price: parseFloat(price),
+      category: category ? category.trim() : '',
+      stock: stock !== undefined ? parseInt(stock) : 0,
+      image: image || null,
+      customFields: customFields || {},
+      createdBy: accountId,
+      status: 'active'
+    });
+
+    await newProduct.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Product created successfully',
+      data: {
+        id: newProduct._id,
+        name: newProduct.name,
+        description: newProduct.description,
+        price: newProduct.price,
+        category: newProduct.category,
+        stock: newProduct.stock,
+        image: newProduct.image,
+        status: newProduct.status,
+        customFields: newProduct.customFields,
+        createdAt: newProduct.createdAt
+      }
+    });
+  } catch (error) {
+    console.error('Create product error:', error);
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(function(e) { return e.message; });
+      return res.status(400).json({
+        success: false,
+        error: errors.join(', ')
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Get all products
+exports.getProducts = async function(req, res) {
+  try {
+    await connectDB();
+    
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const products = await Product.find({ createdBy: accountId })
+      .sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      data: products,
+      count: products.length
+    });
+  } catch (error) {
+    console.error('Get products error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Get single product
+exports.getProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: product
+    });
+  } catch (error) {
+    console.error('Get product error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Update product
+exports.updateProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+    const { name, description, price, category, stock, image, customFields } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find product and verify ownership
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    // Update fields
+    if (name) product.name = name.trim();
+    if (description !== undefined) product.description = description ? description.trim() : '';
+    if (price !== undefined) product.price = parseFloat(price);
+    if (category !== undefined) product.category = category ? category.trim() : '';
+    if (stock !== undefined) product.stock = parseInt(stock);
+    if (image !== undefined) product.image = image || null;
+    if (customFields) {
+      product.customFields = { ...product.customFields, ...customFields };
+    }
+
+    product.updatedAt = Date.now();
+    await product.save();
+
+    res.json({
+      success: true,
+      message: 'Product updated successfully',
+      data: product
+    });
+  } catch (error) {
+    console.error('Update product error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(function(e) { return e.message; });
+      return res.status(400).json({
+        success: false,
+        error: errors.join(', ')
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Delete product
+exports.deleteProduct = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find product and verify ownership
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    await Product.deleteOne({ _id: id });
+
+    res.json({
+      success: true,
+      message: 'Product deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete product error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Update product status
+exports.updateProductStatus = async function(req, res) {
+  try {
+    await connectDB();
+    const { id } = req.params;
+    const { status } = req.body;
+
+    // Validate status
+    if (!status || !['active', 'inactive'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Status must be "active" or "inactive"'
+      });
+    }
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Find product and verify ownership
+    const product = await Product.findOne({ _id: id, createdBy: accountId });
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    product.status = status;
+    product.updatedAt = Date.now();
+    await product.save();
+
+    res.json({
+      success: true,
+      message: 'Product status updated successfully',
+      data: {
+        id: product._id,
+        status: product.status,
+        updatedAt: product.updatedAt
+      }
+    });
+  } catch (error) {
+    console.error('Update product status error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// ========== CART ENDPOINTS ==========
+
+// Add to cart
+exports.addToCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId, productId, quantity } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Validation
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: 'User ID is required'
+      });
+    }
+
+    if (!productId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Product ID is required'
+      });
+    }
+
+    // Verify user belongs to account
+    const user = await User.findOne({ _id: userId, createdBy: accountId });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    // Verify product belongs to account
+    const product = await Product.findOne({ _id: productId, createdBy: accountId });
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: 'Product not found'
+      });
+    }
+
+    // Find or create cart
+    let cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      cart = new Cart({
+        userId: userId,
+        items: [],
+        createdBy: accountId
+      });
+    }
+
+    // Check if product already in cart
+    const existingItemIndex = cart.items.findIndex(
+      function(item) { return item.productId.toString() === productId; }
+    );
+
+    const qty = quantity ? parseInt(quantity) : 1;
+
+    if (existingItemIndex >= 0) {
+      // Update quantity
+      cart.items[existingItemIndex].quantity += qty;
+    } else {
+      // Add new item
+      cart.items.push({
+        productId: productId,
+        quantity: qty,
+        price: product.price
+      });
+    }
+
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Item added to cart successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Add to cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID or product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Get cart
+exports.getCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    // Verify user belongs to account
+    const user = await User.findOne({ _id: userId, createdBy: accountId });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    let cart = await Cart.findOne({ userId: userId, createdBy: accountId })
+      .populate('items.productId');
+    
+    if (!cart) {
+      cart = {
+        userId: userId,
+        items: [],
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+    }
+
+    res.json({
+      success: true,
+      data: cart
+    });
+  } catch (error) {
+    console.error('Get cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Update cart item
+exports.updateCartItem = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId, productId } = req.params;
+    const { quantity } = req.body;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    if (!quantity || quantity < 1) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid quantity is required'
+      });
+    }
+
+    const cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cart not found'
+      });
+    }
+
+    const itemIndex = cart.items.findIndex(
+      function(item) { return item.productId.toString() === productId; }
+    );
+
+    if (itemIndex < 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Item not found in cart'
+      });
+    }
+
+    cart.items[itemIndex].quantity = parseInt(quantity);
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Cart item updated successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Update cart item error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID or product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Remove from cart
+exports.removeFromCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId, productId } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cart not found'
+      });
+    }
+
+    cart.items = cart.items.filter(
+      function(item) { return item.productId.toString() !== productId; }
+    );
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Item removed from cart successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Remove from cart error:', error);
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID or product ID'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
+// Clear cart
+exports.clearCart = async function(req, res) {
+  try {
+    await connectDB();
+    const { userId } = req.params;
+
+    // Get account ID from token
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access token required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(403).json({
+        success: false,
+        error: 'Invalid or expired token'
+      });
+    }
+
+    const accountId = decoded.id;
+
+    const cart = await Cart.findOne({ userId: userId, createdBy: accountId });
+    
+    if (!cart) {
+      return res.status(404).json({
+        success: false,
+        error: 'Cart not found'
+      });
+    }
+
+    cart.items = [];
+    cart.updatedAt = Date.now();
+    await cart.save();
+
+    res.json({
+      success: true,
+      message: 'Cart cleared successfully',
+      data: cart
+    });
+  } catch (error) {
+    console.error('Clear cart error:', error);
     if (error.name === 'CastError') {
       return res.status(400).json({
         success: false,

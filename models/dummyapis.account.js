@@ -12,7 +12,6 @@ var accountSchema = new mongoose.Schema({
     required: true,
     trim: true,
     lowercase: true,
-    unique: true,
     minlength: 3
   },
   email: {
@@ -20,7 +19,6 @@ var accountSchema = new mongoose.Schema({
     required: true,
     trim: true,
     lowercase: true,
-    unique: true,
     match: [/^\S+@\S+\.\S+$/, 'Please enter a valid email']
   },
   passwordHash: {
