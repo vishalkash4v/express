@@ -3,11 +3,15 @@ const router = express.Router();
 const multer = require('multer');
 const sharp = require('sharp');
 
+// Maximum file size: 50MB
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB in bytes
+const MAX_FILE_SIZE_MB = 50;
+
 // Configure multer for memory storage (no disk writes)
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB max
+    fileSize: MAX_FILE_SIZE,
   },
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith('image/')) {
@@ -17,6 +21,29 @@ const upload = multer({
     }
   }
 });
+
+// Helper function to handle multer errors
+const handleMulterError = (err, res) => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({
+        success: false,
+        error: `File too large. Maximum file size is ${MAX_FILE_SIZE_MB}MB.`
+      });
+    }
+    return res.status(400).json({
+      success: false,
+      error: err.message || 'File upload error'
+    });
+  }
+  // Handle other errors (like fileFilter errors)
+  if (err) {
+    return res.status(400).json({
+      success: false,
+      error: err.message || 'Invalid file'
+    });
+  }
+};
 
 // Helper to convert buffer to base64
 const bufferToBase64 = (buffer, mimeType) => {
@@ -100,6 +127,10 @@ router.post('/upscale', upload.single('image'), async (req, res) => {
     });
   } catch (error) {
     console.error('Upscale error:', error);
+    // Handle multer errors
+    if (error instanceof multer.MulterError) {
+      return handleMulterError(error, res);
+    }
     res.status(500).json({ success: false, error: error.message || 'Failed to upscale image' });
   }
 });
@@ -246,6 +277,10 @@ router.post('/compress', upload.single('image'), async (req, res) => {
     });
   } catch (error) {
     console.error('Compress error:', error);
+    // Handle multer errors
+    if (error instanceof multer.MulterError) {
+      return handleMulterError(error, res);
+    }
     res.status(500).json({ success: false, error: error.message || 'Failed to compress image' });
   }
 });
@@ -292,6 +327,10 @@ router.post('/blur', upload.single('image'), async (req, res) => {
     });
   } catch (error) {
     console.error('Blur error:', error);
+    // Handle multer errors
+    if (error instanceof multer.MulterError) {
+      return handleMulterError(error, res);
+    }
     res.status(500).json({ success: false, error: error.message || 'Failed to blur image' });
   }
 });
