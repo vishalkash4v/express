@@ -3,9 +3,10 @@ const router = express.Router();
 const multer = require('multer');
 const sharp = require('sharp');
 
-// Maximum file size: 30MB
-const MAX_FILE_SIZE = 30 * 1024 * 1024; // 30MB in bytes
-const MAX_FILE_SIZE_MB = 30;
+// Maximum file size: 5MB (Vercel optimized)
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB in bytes
+const MAX_FILE_SIZE_MB = 5;
+const MAX_DIMENSION = 3000; // Max width or height in pixels
 
 // Configure multer for memory storage (no disk writes)
 const upload = multer({
@@ -14,10 +15,11 @@ const upload = multer({
     fileSize: MAX_FILE_SIZE,
   },
   fileFilter: (req, file, cb) => {
-    if (file.mimetype.startsWith('image/')) {
+    const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    if (allowedMimes.includes(file.mimetype.toLowerCase())) {
       cb(null, true);
     } else {
-      cb(new Error('Only image files are allowed'), false);
+      cb(new Error('Only JPG, JPEG, PNG, and WebP images are allowed'), false);
     }
   }
 });
@@ -50,20 +52,28 @@ const bufferToBase64 = (buffer, mimeType) => {
   return `data:${mimeType};base64,${buffer.toString('base64')}`;
 };
 
-// Image Upscaler API
+// Image Upscaler API - Redesigned for Vercel
 router.post('/upscale', upload.single('image'), async (req, res) => {
+  const startTime = Date.now();
+  
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, error: 'No image file provided' });
     }
 
-    const { scale, mode } = req.body;
-    const scalePercent = parseFloat(scale) || 200;
-    const processingMode = mode || 'percentage';
-
-    if (scalePercent < 50 || scalePercent > 500) {
-      return res.status(400).json({ success: false, error: 'Scale must be between 50% and 500%' });
+    // Validate file size
+    if (req.file.size > MAX_FILE_SIZE) {
+      return res.status(413).json({ 
+        success: false, 
+        error: `File too large. Maximum file size is ${MAX_FILE_SIZE_MB}MB.` 
+      });
     }
+
+    // Parse request parameters
+    const { scale, mode, enhancementLevel } = req.body;
+    const scaleFactor = scale === '4x' ? 4 : scale === '2x' ? 2 : 2; // Default to 2x
+    const enhancementMode = mode === 'illustration' ? 'illustration' : 'photo'; // Default to photo
+    const enhancement = Math.max(0, Math.min(100, parseFloat(enhancementLevel) || 50)); // 0-100, default 50
 
     let sharpInstance = sharp(req.file.buffer);
 
@@ -72,208 +82,93 @@ router.post('/upscale', upload.single('image'), async (req, res) => {
     const originalWidth = metadata.width;
     const originalHeight = metadata.height;
 
-    let newWidth, newHeight;
-
-    if (processingMode === 'percentage') {
-      const scaleFactor = scalePercent / 100;
-      newWidth = Math.round(originalWidth * scaleFactor);
-      newHeight = Math.round(originalHeight * scaleFactor);
-      
-      // Ensure we're actually upscaling (for percentage mode, scale should be > 100%)
-      if (scalePercent < 100) {
-        return res.status(400).json({ 
-          success: false, 
-          error: 'Scale percentage must be at least 100% to upscale. For downscaling, use Image Resizer tool.' 
-        });
-      }
-      
-      // Log for debugging
-      console.log(`Upscaling: ${originalWidth}x${originalHeight} -> ${newWidth}x${newHeight} (${scalePercent}%)`);
-    } else {
-      // Target size mode - adjust quality/compression to meet target size
-      const targetSizeKB = parseFloat(req.body.targetSizeKB);
-      if (!targetSizeKB || targetSizeKB <= 0) {
-        return res.status(400).json({ 
-          success: false, 
-          error: 'Invalid target size. Please provide a valid target size in KB.' 
-        });
-      }
-      
-      // Start with original dimensions
-      newWidth = parseInt(req.body.width) || originalWidth;
-      newHeight = parseInt(req.body.height) || originalHeight;
-      
-      // We'll adjust quality to meet target size, but dimensions stay the same
-      // The quality adjustment happens in the output options
+    // Validate dimensions
+    if (!originalWidth || !originalHeight) {
+      return res.status(400).json({ success: false, error: 'Invalid image dimensions' });
     }
 
-    // Limit maximum dimensions to prevent memory issues
-    const maxDimension = 8000;
-    if (newWidth > maxDimension || newHeight > maxDimension) {
+    // Reject images larger than MAX_DIMENSION
+    if (originalWidth > MAX_DIMENSION || originalHeight > MAX_DIMENSION) {
       return res.status(400).json({ 
         success: false, 
-        error: `Maximum dimension is ${maxDimension}px. Please reduce the scale.` 
+        error: `Image dimensions too large. Maximum dimension is ${MAX_DIMENSION}px.` 
       });
     }
 
-    // Determine output format - if 'auto', use input format
-    let requestedFormat = req.body.format || 'webp';
-    if (requestedFormat === 'auto') {
-      // Detect from input file
-      const inputMime = req.file.mimetype.toLowerCase();
-      if (inputMime.includes('jpeg') || inputMime.includes('jpg')) {
-        requestedFormat = 'jpeg';
-      } else if (inputMime.includes('png')) {
-        requestedFormat = 'png';
-      } else if (inputMime.includes('webp')) {
-        requestedFormat = 'webp';
-      } else {
-        requestedFormat = 'webp'; // Default fallback
-      }
+    // Calculate new dimensions
+    const newWidth = Math.round(originalWidth * scaleFactor);
+    const newHeight = Math.round(originalHeight * scaleFactor);
+
+    // Validate output dimensions don't exceed limits
+    if (newWidth > MAX_DIMENSION * 2 || newHeight > MAX_DIMENSION * 2) {
+      return res.status(400).json({ 
+        success: false, 
+        error: `Output dimensions too large. Maximum dimension is ${MAX_DIMENSION * 2}px.` 
+      });
     }
+
+    // Map enhancement level (0-100) to sharpening sigma (0.5-3.0)
+    let sharpeningSigma = 0.5 + (enhancement / 100) * 2.5;
     
-    const outputFormat = requestedFormat;
-    let outputMime = 'image/webp';
-    let outputOptions = { quality: 92 };
-
-    if (outputFormat === 'png') {
-      outputMime = 'image/png';
-      outputOptions = { compressionLevel: 9 };
-    } else if (outputFormat === 'jpeg' || outputFormat === 'jpg') {
-      outputMime = 'image/jpeg';
-      outputOptions = { quality: 92, mozjpeg: true };
+    // Mode-specific adjustments
+    if (enhancementMode === 'illustration') {
+      // Stronger sharpening for illustrations
+      sharpeningSigma = Math.min(3.5, sharpeningSigma * 1.2);
+    } else {
+      // Photo mode - moderate sharpening
+      sharpeningSigma = Math.min(2.5, sharpeningSigma * 0.9);
     }
 
-    // For target size mode, adjust quality to meet target
-    if (processingMode === 'targetSize') {
-      const targetSizeKB = parseFloat(req.body.targetSizeKB);
-      let finalBuffer;
-      
-      if (outputFormat === 'jpeg' || outputFormat === 'jpg') {
-        // Binary search for quality that meets target size
-        let low = 10;
-        let high = 100;
-        let bestBuffer = null;
-        let bestDiff = Infinity;
-        
-        for (let i = 0; i < 15; i++) {
-          const mid = Math.round((low + high) / 2);
-          const testBuffer = await sharpInstance
-            .resize(newWidth, newHeight, {
-              kernel: sharp.kernel.lanczos3,
-              fit: 'fill',
-              withoutEnlargement: false
-            })
-            .jpeg({ quality: mid, mozjpeg: true })
-            .toBuffer();
-          
-          const testSizeKB = testBuffer.length / 1024;
-          const diff = Math.abs(testSizeKB - targetSizeKB);
-          
-          if (diff < bestDiff) {
-            bestDiff = diff;
-            bestBuffer = testBuffer;
-          }
-          
-          if (testSizeKB > targetSizeKB) {
-            high = mid - 1;
-          } else {
-            low = mid + 1;
-          }
-          
-          if (diff < 2) break; // Close enough
-        }
-        
-        finalBuffer = bestBuffer || await sharpInstance
-          .resize(newWidth, newHeight, {
-            kernel: sharp.kernel.lanczos3,
-            fit: 'fill',
-            withoutEnlargement: false
-          })
-          .jpeg({ quality: 50, mozjpeg: true })
-          .toBuffer();
-      } else if (outputFormat === 'webp') {
-        // Binary search for WebP quality
-        let low = 10;
-        let high = 100;
-        let bestBuffer = null;
-        let bestDiff = Infinity;
-        
-        for (let i = 0; i < 15; i++) {
-          const mid = Math.round((low + high) / 2);
-          const testBuffer = await sharpInstance
-            .resize(newWidth, newHeight, {
-              kernel: sharp.kernel.lanczos3,
-              fit: 'fill',
-              withoutEnlargement: false
-            })
-            .webp({ quality: mid })
-            .toBuffer();
-          
-          const testSizeKB = testBuffer.length / 1024;
-          const diff = Math.abs(testSizeKB - targetSizeKB);
-          
-          if (diff < bestDiff) {
-            bestDiff = diff;
-            bestBuffer = testBuffer;
-          }
-          
-          if (testSizeKB > targetSizeKB) {
-            high = mid - 1;
-          } else {
-            low = mid + 1;
-          }
-          
-          if (diff < 2) break;
-        }
-        
-        finalBuffer = bestBuffer || await sharpInstance
-          .resize(newWidth, newHeight, {
-            kernel: sharp.kernel.lanczos3,
-            fit: 'fill',
-            withoutEnlargement: false
-          })
-          .webp({ quality: 50 })
-          .toBuffer();
-      } else {
-        // PNG - use maximum compression
-        finalBuffer = await sharpInstance
-          .resize(newWidth, newHeight, {
-            kernel: sharp.kernel.lanczos3,
-            fit: 'fill',
-            withoutEnlargement: false
-          })
-          .png({ compressionLevel: 9 })
-          .toBuffer();
-      }
-      
-      const base64 = bufferToBase64(finalBuffer, outputMime);
-      res.json({
-        success: true,
-        data: base64,
-        originalSize: { width: originalWidth, height: originalHeight },
-        newSize: { width: newWidth, height: newHeight },
-        sizeKB: (finalBuffer.length / 1024).toFixed(2),
-        format: outputFormat
-      });
-      return;
-    }
+    // Configure sharpening (sharp uses sigma for sharpen)
+    const sharpenConfig = {
+      sigma: sharpeningSigma,
+      flat: 1,
+      jagged: 2
+    };
 
-    // Upscale with high quality for percentage mode
-    const upscaledBuffer = await sharpInstance
+    // Build processing pipeline
+    let pipeline = sharpInstance
       .resize(newWidth, newHeight, {
         kernel: sharp.kernel.lanczos3,
         fit: 'fill',
         withoutEnlargement: false
-      })
-      .toFormat(outputFormat === 'jpeg' || outputFormat === 'jpg' ? 'jpeg' : outputFormat, outputOptions)
+      });
+
+    // Apply sharpening
+    pipeline = pipeline.sharpen(sharpenConfig);
+
+    // Apply mode-specific enhancements
+    if (enhancementMode === 'photo') {
+      // Photo mode: Moderate sharpening, slight saturation boost, subtle contrast
+      pipeline = pipeline
+        .modulate({
+          brightness: 1.02, // Slight brightness boost
+          saturation: 1.05 + (enhancement / 100) * 0.1, // Slight saturation boost
+        })
+        .normalise(); // Normalize contrast
+    } else {
+      // Illustration mode: Stronger sharpening, stronger edge enhancement, higher saturation
+      pipeline = pipeline
+        .modulate({
+          brightness: 1.01,
+          saturation: 1.08 + (enhancement / 100) * 0.15, // Higher saturation
+        })
+        .normalise();
+    }
+
+    // Convert to WebP with quality 95
+    const upscaledBuffer = await pipeline
+      .webp({ quality: 95, effort: 4 })
       .toBuffer();
 
-    const base64 = bufferToBase64(upscaledBuffer, outputMime);
+    const processingTime = Date.now() - startTime;
+    
+    // Check if processing took too long (should be under 2 seconds)
+    if (processingTime > 2000) {
+      console.warn(`Upscaling took ${processingTime}ms (target: <2000ms)`);
+    }
 
-    // Clear memory - ensure no file is stored
-    // req.file.buffer will be garbage collected automatically
-    // upscaledBuffer is sent to client and will be cleared after response
+    const base64 = bufferToBase64(upscaledBuffer, 'image/webp');
 
     res.json({
       success: true,
@@ -281,7 +176,10 @@ router.post('/upscale', upload.single('image'), async (req, res) => {
       originalSize: { width: originalWidth, height: originalHeight },
       newSize: { width: newWidth, height: newHeight },
       sizeKB: (upscaledBuffer.length / 1024).toFixed(2),
-      format: outputFormat
+      processingTime: processingTime,
+      scale: scaleFactor,
+      mode: enhancementMode,
+      enhancement: enhancement
     });
   } catch (error) {
     console.error('Upscale error:', error);
