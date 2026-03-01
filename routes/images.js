@@ -3,9 +3,9 @@ const router = express.Router();
 const multer = require('multer');
 const sharp = require('sharp');
 
-// Maximum file size: 50MB
-const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB in bytes
-const MAX_FILE_SIZE_MB = 50;
+// Maximum file size: 10MB (optimized for performance)
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB in bytes
+const MAX_FILE_SIZE_MB = 10;
 
 // Configure multer for memory storage (no disk writes)
 const upload = multer({
@@ -93,8 +93,23 @@ router.post('/upscale', upload.single('image'), async (req, res) => {
       });
     }
 
-    // Determine output format
-    const outputFormat = req.body.format || 'webp';
+    // Determine output format - if 'auto', use input format
+    let requestedFormat = req.body.format || 'webp';
+    if (requestedFormat === 'auto') {
+      // Detect from input file
+      const inputMime = req.file.mimetype.toLowerCase();
+      if (inputMime.includes('jpeg') || inputMime.includes('jpg')) {
+        requestedFormat = 'jpeg';
+      } else if (inputMime.includes('png')) {
+        requestedFormat = 'png';
+      } else if (inputMime.includes('webp')) {
+        requestedFormat = 'webp';
+      } else {
+        requestedFormat = 'webp'; // Default fallback
+      }
+    }
+    
+    const outputFormat = requestedFormat;
     let outputMime = 'image/webp';
     let outputOptions = { quality: 92 };
 
@@ -118,12 +133,17 @@ router.post('/upscale', upload.single('image'), async (req, res) => {
 
     const base64 = bufferToBase64(upscaledBuffer, outputMime);
 
+    // Clear memory - ensure no file is stored
+    // req.file.buffer will be garbage collected automatically
+    // upscaledBuffer is sent to client and will be cleared after response
+
     res.json({
       success: true,
       data: base64,
       originalSize: { width: originalWidth, height: originalHeight },
       newSize: { width: newWidth, height: newHeight },
-      sizeKB: (upscaledBuffer.length / 1024).toFixed(2)
+      sizeKB: (upscaledBuffer.length / 1024).toFixed(2),
+      format: outputFormat
     });
   } catch (error) {
     console.error('Upscale error:', error);
