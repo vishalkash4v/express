@@ -3,10 +3,10 @@ const router = express.Router();
 const multer = require('multer');
 const sharp = require('sharp');
 
-// Maximum file size: 5MB (Vercel optimized)
-const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB in bytes
-const MAX_FILE_SIZE_MB = 5;
-const MAX_DIMENSION = 3000; // Max width or height in pixels
+// Maximum file size: 15MB
+const MAX_FILE_SIZE = 15 * 1024 * 1024; // 15MB in bytes
+const MAX_FILE_SIZE_MB = 15;
+const MAX_DIMENSION = 8000; // Max width or height in pixels
 
 // Configure multer for memory storage (no disk writes)
 const upload = multer({
@@ -99,11 +99,12 @@ router.post('/upscale', upload.single('image'), async (req, res) => {
     const newWidth = Math.round(originalWidth * scaleFactor);
     const newHeight = Math.round(originalHeight * scaleFactor);
 
-    // Validate output dimensions don't exceed limits
-    if (newWidth > MAX_DIMENSION * 2 || newHeight > MAX_DIMENSION * 2) {
+    // Validate output dimensions don't exceed limits (allow up to 4x scale)
+    const maxOutputDimension = MAX_DIMENSION * 4; // Allow 4x upscale of max dimension
+    if (newWidth > maxOutputDimension || newHeight > maxOutputDimension) {
       return res.status(400).json({ 
         success: false, 
-        error: `Output dimensions too large. Maximum dimension is ${MAX_DIMENSION * 2}px.` 
+        error: `Output dimensions too large. Maximum output dimension is ${maxOutputDimension}px.` 
       });
     }
 
