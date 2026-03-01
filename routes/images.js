@@ -3,9 +3,9 @@ const router = express.Router();
 const multer = require('multer');
 const sharp = require('sharp');
 
-// Maximum file size: 10MB (optimized for performance)
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB in bytes
-const MAX_FILE_SIZE_MB = 10;
+// Maximum file size: 30MB
+const MAX_FILE_SIZE = 30 * 1024 * 1024; // 30MB in bytes
+const MAX_FILE_SIZE_MB = 30;
 
 // Configure multer for memory storage (no disk writes)
 const upload = multer({
@@ -78,10 +78,33 @@ router.post('/upscale', upload.single('image'), async (req, res) => {
       const scaleFactor = scalePercent / 100;
       newWidth = Math.round(originalWidth * scaleFactor);
       newHeight = Math.round(originalHeight * scaleFactor);
+      
+      // Ensure we're actually upscaling (for percentage mode, scale should be > 100%)
+      if (scalePercent < 100) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Scale percentage must be at least 100% to upscale. For downscaling, use Image Resizer tool.' 
+        });
+      }
+      
+      // Log for debugging
+      console.log(`Upscaling: ${originalWidth}x${originalHeight} -> ${newWidth}x${newHeight} (${scalePercent}%)`);
     } else {
-      // Target size mode
+      // Target size mode - adjust quality/compression to meet target size
+      const targetSizeKB = parseFloat(req.body.targetSizeKB);
+      if (!targetSizeKB || targetSizeKB <= 0) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Invalid target size. Please provide a valid target size in KB.' 
+        });
+      }
+      
+      // Start with original dimensions
       newWidth = parseInt(req.body.width) || originalWidth;
       newHeight = parseInt(req.body.height) || originalHeight;
+      
+      // We'll adjust quality to meet target size, but dimensions stay the same
+      // The quality adjustment happens in the output options
     }
 
     // Limit maximum dimensions to prevent memory issues
@@ -121,7 +144,122 @@ router.post('/upscale', upload.single('image'), async (req, res) => {
       outputOptions = { quality: 92, mozjpeg: true };
     }
 
-    // Upscale with high quality
+    // For target size mode, adjust quality to meet target
+    if (processingMode === 'targetSize') {
+      const targetSizeKB = parseFloat(req.body.targetSizeKB);
+      let finalBuffer;
+      
+      if (outputFormat === 'jpeg' || outputFormat === 'jpg') {
+        // Binary search for quality that meets target size
+        let low = 10;
+        let high = 100;
+        let bestBuffer = null;
+        let bestDiff = Infinity;
+        
+        for (let i = 0; i < 15; i++) {
+          const mid = Math.round((low + high) / 2);
+          const testBuffer = await sharpInstance
+            .resize(newWidth, newHeight, {
+              kernel: sharp.kernel.lanczos3,
+              fit: 'fill',
+              withoutEnlargement: false
+            })
+            .jpeg({ quality: mid, mozjpeg: true })
+            .toBuffer();
+          
+          const testSizeKB = testBuffer.length / 1024;
+          const diff = Math.abs(testSizeKB - targetSizeKB);
+          
+          if (diff < bestDiff) {
+            bestDiff = diff;
+            bestBuffer = testBuffer;
+          }
+          
+          if (testSizeKB > targetSizeKB) {
+            high = mid - 1;
+          } else {
+            low = mid + 1;
+          }
+          
+          if (diff < 2) break; // Close enough
+        }
+        
+        finalBuffer = bestBuffer || await sharpInstance
+          .resize(newWidth, newHeight, {
+            kernel: sharp.kernel.lanczos3,
+            fit: 'fill',
+            withoutEnlargement: false
+          })
+          .jpeg({ quality: 50, mozjpeg: true })
+          .toBuffer();
+      } else if (outputFormat === 'webp') {
+        // Binary search for WebP quality
+        let low = 10;
+        let high = 100;
+        let bestBuffer = null;
+        let bestDiff = Infinity;
+        
+        for (let i = 0; i < 15; i++) {
+          const mid = Math.round((low + high) / 2);
+          const testBuffer = await sharpInstance
+            .resize(newWidth, newHeight, {
+              kernel: sharp.kernel.lanczos3,
+              fit: 'fill',
+              withoutEnlargement: false
+            })
+            .webp({ quality: mid })
+            .toBuffer();
+          
+          const testSizeKB = testBuffer.length / 1024;
+          const diff = Math.abs(testSizeKB - targetSizeKB);
+          
+          if (diff < bestDiff) {
+            bestDiff = diff;
+            bestBuffer = testBuffer;
+          }
+          
+          if (testSizeKB > targetSizeKB) {
+            high = mid - 1;
+          } else {
+            low = mid + 1;
+          }
+          
+          if (diff < 2) break;
+        }
+        
+        finalBuffer = bestBuffer || await sharpInstance
+          .resize(newWidth, newHeight, {
+            kernel: sharp.kernel.lanczos3,
+            fit: 'fill',
+            withoutEnlargement: false
+          })
+          .webp({ quality: 50 })
+          .toBuffer();
+      } else {
+        // PNG - use maximum compression
+        finalBuffer = await sharpInstance
+          .resize(newWidth, newHeight, {
+            kernel: sharp.kernel.lanczos3,
+            fit: 'fill',
+            withoutEnlargement: false
+          })
+          .png({ compressionLevel: 9 })
+          .toBuffer();
+      }
+      
+      const base64 = bufferToBase64(finalBuffer, outputMime);
+      res.json({
+        success: true,
+        data: base64,
+        originalSize: { width: originalWidth, height: originalHeight },
+        newSize: { width: newWidth, height: newHeight },
+        sizeKB: (finalBuffer.length / 1024).toFixed(2),
+        format: outputFormat
+      });
+      return;
+    }
+
+    // Upscale with high quality for percentage mode
     const upscaledBuffer = await sharpInstance
       .resize(newWidth, newHeight, {
         kernel: sharp.kernel.lanczos3,
