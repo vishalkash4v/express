@@ -8,9 +8,9 @@ const MAX_FILE_SIZE = 15 * 1024 * 1024; // 15MB in bytes
 const MAX_FILE_SIZE_MB = 15;
 const MAX_DIMENSION = 8000; // Max width or height in pixels (for upscaler)
 
-// Compressor specific limits
-const MAX_COMPRESSOR_FILE_SIZE = 8 * 1024 * 1024; // 8MB in bytes
-const MAX_COMPRESSOR_FILE_SIZE_MB = 8;
+// Compressor specific limits (increased to match upscaler)
+const MAX_COMPRESSOR_FILE_SIZE = 15 * 1024 * 1024; // 15MB in bytes
+const MAX_COMPRESSOR_FILE_SIZE_MB = 15;
 const MAX_COMPRESSOR_DIMENSION = 4000; // Max width or height in pixels
 const MAX_SMART_RESIZE_DIMENSION = 3000; // Max dimension for smart resize
 
