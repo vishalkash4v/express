@@ -3,10 +3,16 @@ const router = express.Router();
 const multer = require('multer');
 const sharp = require('sharp');
 
-// Maximum file size: 15MB
+// Maximum file size: 15MB (for upscaler), 8MB (for compressor)
 const MAX_FILE_SIZE = 15 * 1024 * 1024; // 15MB in bytes
 const MAX_FILE_SIZE_MB = 15;
-const MAX_DIMENSION = 8000; // Max width or height in pixels
+const MAX_DIMENSION = 8000; // Max width or height in pixels (for upscaler)
+
+// Compressor specific limits
+const MAX_COMPRESSOR_FILE_SIZE = 8 * 1024 * 1024; // 8MB in bytes
+const MAX_COMPRESSOR_FILE_SIZE_MB = 8;
+const MAX_COMPRESSOR_DIMENSION = 4000; // Max width or height in pixels
+const MAX_SMART_RESIZE_DIMENSION = 3000; // Max dimension for smart resize
 
 // Configure multer for memory storage (no disk writes)
 const upload = multer({
@@ -192,70 +198,259 @@ router.post('/upscale', upload.single('image'), async (req, res) => {
   }
 });
 
-// Image Compressor API
+// Image Compressor API - Redesigned for Vercel
 router.post('/compress', upload.single('image'), async (req, res) => {
+  const startTime = Date.now();
+  
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, error: 'No image file provided' });
     }
 
-    const { mode, quality, targetSizeKB, format } = req.body;
-    const compressionMode = mode || 'quality';
-    const outputFormat = format || 'webp';
+    // Validate file size
+    if (req.file.size > MAX_COMPRESSOR_FILE_SIZE) {
+      return res.status(413).json({ 
+        success: false, 
+        error: `File too large. Maximum file size is ${MAX_COMPRESSOR_FILE_SIZE_MB}MB.` 
+      });
+    }
+
+    // Parse request parameters
+    const { 
+      mode, // 'auto', 'targetSize', 'manual'
+      quality, // 10-100 for manual mode
+      targetSizeKB, // for targetSize mode
+      format, // 'jpg', 'webp', 'png' for manual mode
+      removeMetadata, // boolean
+      progressive, // boolean (for JPEG)
+      smartResize, // boolean
+      preset // 'instagram-post', 'instagram-story', 'youtube-thumbnail', 'whatsapp'
+    } = req.body;
+
+    const compressionMode = mode || 'auto';
+    const shouldRemoveMetadata = removeMetadata !== 'false';
+    const shouldProgressive = progressive === 'true';
+    const shouldSmartResize = smartResize === 'true';
 
     let sharpInstance = sharp(req.file.buffer);
+
+    // Get original metadata
     const metadata = await sharpInstance.metadata();
+    const originalWidth = metadata.width;
+    const originalHeight = metadata.height;
     const originalSizeKB = req.file.size / 1024;
 
-    let outputBuffer;
-    let outputMime = 'image/webp';
-    let finalQuality = quality ? parseInt(quality) : 80;
+    // Validate dimensions
+    if (!originalWidth || !originalHeight) {
+      return res.status(400).json({ success: false, error: 'Invalid image dimensions' });
+    }
 
-    if (outputFormat === 'png') {
-      outputMime = 'image/png';
-      if (compressionMode === 'quality') {
-        outputBuffer = await sharpInstance
+    // Reject images larger than MAX_COMPRESSOR_DIMENSION
+    if (originalWidth > MAX_COMPRESSOR_DIMENSION || originalHeight > MAX_COMPRESSOR_DIMENSION) {
+      return res.status(400).json({ 
+        success: false, 
+        error: `Image dimensions too large. Maximum dimension is ${MAX_COMPRESSOR_DIMENSION}px.` 
+      });
+    }
+
+    // Detect input format
+    const inputMime = req.file.mimetype.toLowerCase();
+    const inputFormat = inputMime.includes('jpeg') || inputMime.includes('jpg') ? 'jpg' :
+                       inputMime.includes('png') ? 'png' :
+                       inputMime.includes('webp') ? 'webp' : 'jpg';
+
+    // Handle social media presets
+    let targetWidth = originalWidth;
+    let targetHeight = originalHeight;
+    let presetFormat = null;
+
+    if (preset) {
+      switch (preset) {
+        case 'instagram-post':
+          targetWidth = 1080;
+          targetHeight = 1080;
+          presetFormat = 'jpg';
+          break;
+        case 'instagram-story':
+          targetWidth = 1080;
+          targetHeight = 1920;
+          presetFormat = 'jpg';
+          break;
+        case 'youtube-thumbnail':
+          targetWidth = 1280;
+          targetHeight = 720;
+          presetFormat = 'jpg';
+          break;
+        case 'whatsapp':
+          targetWidth = 1600;
+          targetHeight = 1600;
+          presetFormat = 'jpg';
+          break;
+      }
+    }
+
+    // Smart resize if enabled and image is large
+    if (shouldSmartResize && (originalWidth > MAX_SMART_RESIZE_DIMENSION || originalHeight > MAX_SMART_RESIZE_DIMENSION)) {
+      const scale = Math.min(
+        MAX_SMART_RESIZE_DIMENSION / originalWidth,
+        MAX_SMART_RESIZE_DIMENSION / originalHeight
+      );
+      targetWidth = Math.round(originalWidth * scale);
+      targetHeight = Math.round(originalHeight * scale);
+    }
+
+    // Apply resize if needed
+    if (targetWidth !== originalWidth || targetHeight !== originalHeight) {
+      sharpInstance = sharpInstance.resize(targetWidth, targetHeight, {
+        fit: 'inside',
+        withoutEnlargement: true
+      });
+    }
+
+    // Remove metadata if requested (but preserve alpha channel for transparency)
+    if (shouldRemoveMetadata) {
+      sharpInstance = sharpInstance.withMetadata({});
+    }
+
+    let outputFormat = format || 'webp';
+    let outputMime = 'image/webp';
+    let outputOptions = {};
+    let outputBuffer;
+
+    // AUTO MODE: Smart format selection
+    if (compressionMode === 'auto') {
+      // Try WebP first (best compression)
+      const webpBuffer = await sharpInstance
+        .webp({ quality: 85, effort: 4 })
+        .toBuffer();
+      const webpSizeKB = webpBuffer.length / 1024;
+
+      // Try JPEG
+      const jpegBuffer = await sharpInstance
+        .jpeg({ quality: 85, mozjpeg: true })
+        .toBuffer();
+      const jpegSizeKB = jpegBuffer.length / 1024;
+
+      // Choose best format
+      if (inputFormat === 'png' && metadata.hasAlpha) {
+        // Preserve PNG if has transparency
+        const pngBuffer = await sharpInstance
           .png({ compressionLevel: 9, adaptiveFiltering: true })
           .toBuffer();
+        const pngSizeKB = pngBuffer.length / 1024;
+
+        if (webpSizeKB < pngSizeKB && webpSizeKB < jpegSizeKB) {
+          outputFormat = 'webp';
+          outputMime = 'image/webp';
+          outputOptions = { quality: 85, effort: 4 };
+          outputBuffer = webpBuffer;
+        } else if (pngSizeKB < jpegSizeKB) {
+          outputFormat = 'png';
+          outputMime = 'image/png';
+          outputOptions = { compressionLevel: 9, adaptiveFiltering: true };
+          outputBuffer = pngBuffer;
+        } else {
+          outputFormat = 'jpg';
+          outputMime = 'image/jpeg';
+          outputOptions = { quality: 85, mozjpeg: true };
+          outputBuffer = jpegBuffer;
+        }
       } else {
-        // Target size mode for PNG - resize if needed
-        const targetKB = parseFloat(targetSizeKB) || 100;
-        let currentBuffer = await sharpInstance.png({ compressionLevel: 9 }).toBuffer();
+        // No transparency, choose best compression
+        if (webpSizeKB < jpegSizeKB) {
+          outputFormat = 'webp';
+          outputMime = 'image/webp';
+          outputOptions = { quality: 85, effort: 4 };
+          outputBuffer = webpBuffer;
+        } else {
+          outputFormat = 'jpg';
+          outputMime = 'image/jpeg';
+          outputOptions = { quality: 85, mozjpeg: true };
+          outputBuffer = jpegBuffer;
+        }
+      }
+    }
+    // TARGET SIZE MODE
+    else if (compressionMode === 'targetSize') {
+      const targetKB = parseFloat(targetSizeKB);
+      if (!targetKB || targetKB <= 0) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Invalid target size. Please provide a valid target size in KB.' 
+        });
+      }
+
+      // Use preset format or default to WebP
+      const finalFormat = presetFormat || format || 'webp';
+      outputFormat = finalFormat;
+      
+      if (finalFormat === 'jpg' || finalFormat === 'jpeg') {
+        outputMime = 'image/jpeg';
+        // Binary search for quality (max 5 iterations for speed)
+        let low = 10;
+        let high = 100;
+        let bestBuffer = null;
+        let bestDiff = Infinity;
+
+        for (let i = 0; i < 5; i++) {
+          const mid = Math.round((low + high) / 2);
+          const testBuffer = await sharpInstance
+            .jpeg({ quality: mid, mozjpeg: true, progressive: shouldProgressive })
+            .toBuffer();
+          
+          const testSizeKB = testBuffer.length / 1024;
+          const diff = Math.abs(testSizeKB - targetKB);
+
+          if (diff < bestDiff) {
+            bestDiff = diff;
+            bestBuffer = testBuffer;
+          }
+
+          if (testSizeKB > targetKB) {
+            high = mid - 1;
+          } else {
+            low = mid + 1;
+          }
+
+          if (diff < 2) break; // Close enough
+        }
+
+        outputBuffer = bestBuffer || await sharpInstance
+          .jpeg({ quality: 50, mozjpeg: true, progressive: shouldProgressive })
+          .toBuffer();
+      } else if (finalFormat === 'png') {
+        outputMime = 'image/png';
+        // PNG compression is limited, may need resize
+        let currentBuffer = await sharpInstance
+          .png({ compressionLevel: 9, adaptiveFiltering: true })
+          .toBuffer();
         let currentSizeKB = currentBuffer.length / 1024;
 
         if (currentSizeKB > targetKB) {
-          // Reduce dimensions to meet target size
-          const scale = Math.sqrt(targetKB / currentSizeKB) * 0.9; // 0.9 for safety margin
-          const newWidth = Math.round(metadata.width * scale);
-          const newHeight = Math.round(metadata.height * scale);
+          // Reduce dimensions to meet target
+          const scale = Math.sqrt(targetKB / currentSizeKB) * 0.9;
+          const newWidth = Math.round(targetWidth * scale);
+          const newHeight = Math.round(targetHeight * scale);
           
-          outputBuffer = await sharpInstance
+          outputBuffer = await sharp(req.file.buffer)
             .resize(newWidth, newHeight, { fit: 'inside', withoutEnlargement: true })
-            .png({ compressionLevel: 9 })
+            .png({ compressionLevel: 9, adaptiveFiltering: true })
             .toBuffer();
         } else {
           outputBuffer = currentBuffer;
         }
-      }
-    } else if (outputFormat === 'jpeg' || outputFormat === 'jpg') {
-      outputMime = 'image/jpeg';
-      
-      if (compressionMode === 'quality') {
-        outputBuffer = await sharpInstance
-          .jpeg({ quality: finalQuality, mozjpeg: true })
-          .toBuffer();
       } else {
-        // Binary search for target size
-        const targetKB = parseFloat(targetSizeKB) || 100;
+        // WebP
+        outputMime = 'image/webp';
         let low = 10;
         let high = 100;
         let bestBuffer = null;
         let bestDiff = Infinity;
 
-        for (let i = 0; i < 10; i++) {
+        for (let i = 0; i < 5; i++) {
           const mid = Math.round((low + high) / 2);
           const testBuffer = await sharpInstance
-            .jpeg({ quality: mid, mozjpeg: true })
+            .webp({ quality: mid, effort: 4 })
             .toBuffer();
           
           const testSizeKB = testBuffer.length / 1024;
@@ -272,52 +467,56 @@ router.post('/compress', upload.single('image'), async (req, res) => {
             low = mid + 1;
           }
 
-          if (diff < 5) break; // Close enough
+          if (diff < 2) break;
         }
 
-        outputBuffer = bestBuffer || await sharpInstance.jpeg({ quality: 50, mozjpeg: true }).toBuffer();
+        outputBuffer = bestBuffer || await sharpInstance
+          .webp({ quality: 50, effort: 4 })
+          .toBuffer();
       }
-    } else {
-      // WebP
-      outputMime = 'image/webp';
-      
-      if (compressionMode === 'quality') {
+    }
+    // MANUAL MODE
+    else {
+      const finalFormat = presetFormat || format || 'webp';
+      outputFormat = finalFormat;
+      const finalQuality = Math.max(10, Math.min(100, parseInt(quality) || 80));
+
+      if (finalFormat === 'jpg' || finalFormat === 'jpeg') {
+        outputMime = 'image/jpeg';
         outputBuffer = await sharpInstance
-          .webp({ quality: finalQuality })
+          .jpeg({ 
+            quality: finalQuality, 
+            mozjpeg: true, 
+            progressive: shouldProgressive,
+            chromaSubsampling: '4:4:4'
+          })
+          .toBuffer();
+      } else if (finalFormat === 'png') {
+        outputMime = 'image/png';
+        const compressionLevel = Math.round((100 - finalQuality) / 10);
+        outputBuffer = await sharpInstance
+          .png({ 
+            compressionLevel: Math.max(0, Math.min(9, compressionLevel)),
+            adaptiveFiltering: true
+          })
           .toBuffer();
       } else {
-        // Binary search for target size
-        const targetKB = parseFloat(targetSizeKB) || 100;
-        let low = 10;
-        let high = 100;
-        let bestBuffer = null;
-        let bestDiff = Infinity;
-
-        for (let i = 0; i < 10; i++) {
-          const mid = Math.round((low + high) / 2);
-          const testBuffer = await sharpInstance
-            .webp({ quality: mid })
-            .toBuffer();
-          
-          const testSizeKB = testBuffer.length / 1024;
-          const diff = Math.abs(testSizeKB - targetKB);
-
-          if (diff < bestDiff) {
-            bestDiff = diff;
-            bestBuffer = testBuffer;
-          }
-
-          if (testSizeKB > targetKB) {
-            high = mid - 1;
-          } else {
-            low = mid + 1;
-          }
-
-          if (diff < 5) break;
-        }
-
-        outputBuffer = bestBuffer || await sharpInstance.webp({ quality: 50 }).toBuffer();
+        // WebP
+        outputMime = 'image/webp';
+        outputBuffer = await sharpInstance
+          .webp({ 
+            quality: finalQuality,
+            effort: 4
+          })
+          .toBuffer();
       }
+    }
+
+    const processingTime = Date.now() - startTime;
+    
+    // Check if processing took too long
+    if (processingTime > 2000) {
+      console.warn(`Compression took ${processingTime}ms (target: <2000ms)`);
     }
 
     const compressedSizeKB = outputBuffer.length / 1024;
@@ -330,7 +529,10 @@ router.post('/compress', upload.single('image'), async (req, res) => {
       originalSizeKB: originalSizeKB.toFixed(2),
       compressedSizeKB: compressedSizeKB.toFixed(2),
       compressionRatio: compressionRatio,
-      format: outputFormat
+      format: outputFormat,
+      processingTime: processingTime,
+      originalDimensions: { width: originalWidth, height: originalHeight },
+      compressedDimensions: { width: targetWidth, height: targetHeight }
     });
   } catch (error) {
     console.error('Compress error:', error);
