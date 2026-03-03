@@ -27,9 +27,12 @@ var sitemapRouter = require('./routes/sitemap');
 var { connectDB } = require('./utils/db');
 
 // Connect to MongoDB on startup (for serverless, connection is cached)
-connectDB().catch((err) => {
-  console.error('Failed to connect to MongoDB:', err);
-});
+// Only connect if not already connected (for serverless cold starts)
+if (mongoose.connection.readyState === 0) {
+  connectDB().catch((err) => {
+    console.error('Failed to connect to MongoDB:', err);
+  });
+}
 
 var app = express();
 
