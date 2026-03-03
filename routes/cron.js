@@ -4,8 +4,10 @@ const Blog = require('../models/Blog');
 
 /**
  * Vercel Cron Job: Publish scheduled blogs
- * This endpoint is called by Vercel Cron every 5 minutes
+ * This endpoint is called by Vercel Cron once daily (Hobby plan limitation)
+ * For Pro/Enterprise plans, can be changed to run more frequently
  * Path: /api/cron/publish-scheduled
+ * Schedule: Daily at 1 AM UTC (0 1 * * *)
  */
 router.get('/publish-scheduled', async (req, res) => {
   try {
