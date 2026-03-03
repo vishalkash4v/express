@@ -8,8 +8,7 @@ Add these to `Backend/package.json`:
 {
   "dependencies": {
     "dompurify": "^3.0.6",
-    "jsdom": "^23.0.1",
-    "node-cron": "^3.0.11"
+    "jsdom": "^23.0.1"
   }
 }
 ```
@@ -17,8 +16,10 @@ Add these to `Backend/package.json`:
 Install:
 ```bash
 cd Backend
-npm install dompurify jsdom node-cron
+npm install dompurify jsdom
 ```
+
+**Note:** `node-cron` is NOT needed - we use Vercel Cron Jobs instead.
 
 ## 🔧 Backend Setup
 

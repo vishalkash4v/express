@@ -10,9 +10,17 @@ const Blog = require('../models/Blog');
 router.get('/publish-scheduled', async (req, res) => {
   try {
     // Verify this is a Vercel cron request (optional security check)
+    // Vercel sends Authorization header with cron secret
     const authHeader = req.headers['authorization'];
-    if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    const cronSecret = process.env.CRON_SECRET;
+    
+    // Only check if CRON_SECRET is set (optional)
+    if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+      // In production, Vercel automatically adds the auth header
+      // But we'll allow it if no secret is set (for development)
+      if (process.env.NODE_ENV === 'production') {
+        return res.status(401).json({ success: false, error: 'Unauthorized' });
+      }
     }
 
     const now = new Date();
