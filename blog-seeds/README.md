@@ -10,13 +10,13 @@ This folder contains ready-to-publish blog payloads for the backend blog API.
 3. POST it to:
    - `POST /api/blog`
 
-Example with local backend:
+Example with your backend:
 
 ```bash
-curl -X POST "http://localhost:1111/api/blog" \
+curl -X POST "https://express-two-umber.vercel.app/api/blog" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_ADMIN_JWT" \
   --data-binary @Backend/blog-seeds/best-ai-rewriter-tool-fyntools.json
 ```
 
-For production, replace the host with your deployed API domain.
+API base used: `https://express-two-umber.vercel.app/api`
