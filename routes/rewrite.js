@@ -47,12 +47,19 @@ Please rewrite the following text. Make it natural and maintain the original mea
 Original text:
 ${text}`;
 
-    // Try different model names - gemini-1.5-flash-latest is the recommended free tier model
+    // Try current model names first. Older names like gemini-1.5-* / gemini-pro are retired.
     let model;
     let rewrittenText;
     let lastError;
-    
-    const modelsToTry = ['gemini-1.5-flash-latest', 'gemini-1.5-flash', 'gemini-pro'];
+
+    const configuredModel = (process.env.GEMINI_MODEL || '').trim();
+    const defaultModels = [
+      'gemini-2.5-flash-lite',
+      'gemini-2.5-flash',
+      'gemini-2.0-flash',
+      'gemini-flash-latest'
+    ];
+    const modelsToTry = [...new Set(configuredModel ? [configuredModel, ...defaultModels] : defaultModels)];
     
     for (const modelName of modelsToTry) {
       try {
@@ -78,13 +85,19 @@ ${text}`;
         }
       } catch (err) {
         lastError = err;
-        console.log(`Model ${modelName} failed: ${err.message}`);
+        const status = err && typeof err.status !== 'undefined' ? ` (status: ${err.status})` : '';
+        console.log(`Model ${modelName} failed${status}: ${err.message}`);
         continue;
       }
     }
     
     // If all models failed, throw the last error
     if (!rewrittenText) {
+      if (lastError && lastError.status === 404) {
+        throw new Error(
+          'No supported Gemini text model was found for this API key. Set GEMINI_MODEL in env to an available model (for example: gemini-2.5-flash-lite or gemini-2.0-flash).'
+        );
+      }
       throw lastError || new Error('Failed to generate content with any available model. Please check your API key and model access.');
     }
 
