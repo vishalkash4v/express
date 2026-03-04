@@ -2,8 +2,12 @@ var express = require('express');
 var router = express.Router();
 var { GoogleGenerativeAI } = require('@google/generative-ai');
 
-// Gemini API Key
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyCiHOZWkYUR0xzU55oiPyCd1kHL2LH7j5k';
+// Gemini API Key must come from environment
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+
+if (!GEMINI_API_KEY) {
+  throw new Error('GEMINI_API_KEY environment variable is required');
+}
 
 // Initialize Gemini AI
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
@@ -104,4 +108,3 @@ ${text}`;
 });
 
 module.exports = router;
-
