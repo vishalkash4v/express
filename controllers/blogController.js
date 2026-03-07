@@ -986,7 +986,7 @@ exports.generateAIBlog = async (req, res) => {
       });
     }
 
-    const {
+    let {
       topic,
       blogType,
       category,
