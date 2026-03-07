@@ -3,116 +3,27 @@ const { connectDB } = require('../utils/db');
 const fs = require('fs');
 const path = require('path');
 
-// Read toolsData.ts file and extract tools
+// Read toolsData.json file and extract tools
 function extractToolsFromFile() {
   try {
-    const filePath = path.join(__dirname, '../../Frontend/src/data/toolsData.ts');
-    const fileContent = fs.readFileSync(filePath, 'utf8');
+    // Read from backend's data directory (works in both local and Vercel)
+    const filePath = path.join(__dirname, '../data/toolsData.json');
     
-    // Extract the allTools array content
-    const arrayMatch = fileContent.match(/export const allTools: Tool\[\] = \[([\s\S]*?)\];/);
-    if (!arrayMatch) {
-      throw new Error('Could not find allTools array in toolsData.ts');
+    if (!fs.existsSync(filePath)) {
+      throw new Error(`toolsData.json not found at ${filePath}. Please run: node scripts/extractToolsData.js`);
     }
     
-    const toolsArrayContent = arrayMatch[1];
+    const fileContent = fs.readFileSync(filePath, 'utf8');
+    const tools = JSON.parse(fileContent);
     
-    // Parse each tool object - more robust parsing
-    const tools = [];
-    
-    // Find all tool objects (non-commented)
-    // Match pattern: { ... } where ... doesn't contain unescaped closing braces
-    let braceCount = 0;
-    let currentTool = '';
-    let inString = false;
-    let stringChar = '';
-    let inComment = false;
-    
-    for (let i = 0; i < toolsArrayContent.length; i++) {
-      const char = toolsArrayContent[i];
-      const nextChar = toolsArrayContent[i + 1];
-      
-      // Handle comments
-      if (!inString && char === '/' && nextChar === '/') {
-        inComment = true;
-        continue;
-      }
-      if (inComment && char === '\n') {
-        inComment = false;
-        continue;
-      }
-      if (inComment) continue;
-      
-      // Handle strings (both single and double quotes)
-      if (!inString && (char === '"' || char === "'")) {
-        inString = true;
-        stringChar = char;
-        currentTool += char;
-        continue;
-      }
-      if (inString && char === stringChar && toolsArrayContent[i - 1] !== '\\') {
-        inString = false;
-        stringChar = '';
-        currentTool += char;
-        continue;
-      }
-      
-      if (inString) {
-        currentTool += char;
-        continue;
-      }
-      
-      // Track braces
-      if (char === '{') {
-        if (braceCount === 0) {
-          currentTool = '{';
-        } else {
-          currentTool += char;
-        }
-        braceCount++;
-      } else if (char === '}') {
-        currentTool += char;
-        braceCount--;
-        
-        // Complete tool object found
-        if (braceCount === 0) {
-          // Extract fields using regex (handle multiline)
-          const idMatch = currentTool.match(/id:\s*['"]([^'"]+)['"]/);
-          const nameMatch = currentTool.match(/name:\s*['"]([^'"]+)['"]/);
-          const categoryMatch = currentTool.match(/category:\s*['"]([^'"]+)['"]/);
-          const descMatch = currentTool.match(/description:\s*['"]([^'"]+)['"]/);
-          const keywordsMatch = currentTool.match(/keywords:\s*['"]([^'"]+)['"]/);
-          const pathMatch = currentTool.match(/path:\s*['"]([^'"]+)['"]/);
-          const hrefMatch = currentTool.match(/href:\s*['"]([^'"]*)['"]/);
-          const urlMatch = currentTool.match(/url:\s*['"]([^'"]+)['"]/);
-          const featuresMatch = currentTool.match(/features:\s*['"]([^'"]+)['"]/);
-          
-          if (idMatch && nameMatch && categoryMatch && descMatch && keywordsMatch && pathMatch && urlMatch && featuresMatch) {
-            tools.push({
-              id: idMatch[1],
-              name: nameMatch[1],
-              category: categoryMatch[1],
-              description: descMatch[1],
-              keywords: keywordsMatch[1],
-              path: pathMatch[1],
-              href: hrefMatch && hrefMatch[1] ? hrefMatch[1] : pathMatch[1],
-              url: urlMatch[1],
-              features: featuresMatch[1]
-            });
-          }
-          
-          currentTool = '';
-        }
-      } else {
-        if (braceCount > 0) {
-          currentTool += char;
-        }
-      }
+    // Validate that we have tools
+    if (!Array.isArray(tools) || tools.length === 0) {
+      throw new Error('toolsData.json is empty or invalid');
     }
     
     return tools;
   } catch (error) {
-    console.error('Error extracting tools from file:', error);
+    console.error('Error reading tools from JSON file:', error);
     throw error;
   }
 }
@@ -122,7 +33,7 @@ exports.syncTools = async (req, res) => {
   try {
     await connectDB();
     
-    console.log('Starting tools sync from toolsData.ts...');
+    console.log('Starting tools sync from toolsData.json...');
     
     // Extract tools from file
     const toolsFromFile = extractToolsFromFile();
@@ -130,7 +41,7 @@ exports.syncTools = async (req, res) => {
     if (!toolsFromFile || toolsFromFile.length === 0) {
       return res.status(400).json({
         success: false,
-        error: 'No tools found in toolsData.ts file'
+        error: 'No tools found in toolsData.json file'
       });
     }
     
