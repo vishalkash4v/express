@@ -52,6 +52,11 @@ var toolSchema = new mongoose.Schema({
     type: Boolean,
     default: true
   },
+  viewCount: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
   lastSyncedAt: {
     type: Date,
     default: Date.now
@@ -64,6 +69,7 @@ var toolSchema = new mongoose.Schema({
 toolSchema.index({ id: 1 }, { unique: true });
 toolSchema.index({ category: 1 });
 toolSchema.index({ isActive: 1 });
+toolSchema.index({ viewCount: -1 }); // For sorting by views
 toolSchema.index({ name: 'text', description: 'text', keywords: 'text' });
 
 module.exports = mongoose.model('Tool', toolSchema);

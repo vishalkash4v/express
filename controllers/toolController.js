@@ -133,6 +133,8 @@ exports.getAllTools = async (req, res) => {
     const limit = parseInt(req.query.limit) || 50;
     const category = req.query.category;
     const search = req.query.search;
+    const sortBy = req.query.sortBy || 'name'; // Default sort by name
+    const sortOrder = req.query.sortOrder === 'desc' ? -1 : 1; // Default ascending
     const skip = (page - 1) * limit;
     
     // Build query
@@ -148,9 +150,31 @@ exports.getAllTools = async (req, res) => {
       ];
     }
     
+    // Build sort object
+    let sortObj = {};
+    switch (sortBy) {
+      case 'views':
+        sortObj = { viewCount: sortOrder };
+        break;
+      case 'name':
+        sortObj = { name: sortOrder };
+        break;
+      case 'category':
+        sortObj = { category: sortOrder, name: 1 };
+        break;
+      case 'created':
+        sortObj = { createdAt: sortOrder };
+        break;
+      case 'updated':
+        sortObj = { updatedAt: sortOrder };
+        break;
+      default:
+        sortObj = { name: sortOrder };
+    }
+    
     const total = await Tool.countDocuments(query);
     const tools = await Tool.find(query)
-      .sort({ category: 1, name: 1 })
+      .sort(sortObj)
       .skip(skip)
       .limit(limit)
       .select('-__v');
@@ -173,6 +197,48 @@ exports.getAllTools = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to fetch tools'
+    });
+  }
+};
+
+// Increment view count for a tool
+exports.incrementViewCount = async (req, res) => {
+  try {
+    await connectDB();
+    
+    const { toolId } = req.body;
+    
+    if (!toolId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Tool ID is required'
+      });
+    }
+    
+    const tool = await Tool.findOneAndUpdate(
+      { id: toolId },
+      { $inc: { viewCount: 1 } },
+      { new: true }
+    );
+    
+    if (!tool) {
+      return res.status(404).json({
+        success: false,
+        error: 'Tool not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: {
+        viewCount: tool.viewCount
+      }
+    });
+  } catch (error) {
+    console.error('Increment view count error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to increment view count'
     });
   }
 };
