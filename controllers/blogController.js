@@ -2,6 +2,7 @@ const Blog = require('../models/Blog');
 const { sanitizeHTML, extractText, extractMetaTags } = require('../utils/htmlSanitizer');
 const { generateSlug, generateUniqueSlug } = require('../utils/slugGenerator');
 const { generateSitemap } = require('../utils/sitemapGenerator');
+const { connectDB } = require('../utils/db');
 const sharp = require('sharp');
 const multer = require('multer');
 const path = require('path');
@@ -30,7 +31,61 @@ const upload = multer({
 
 // Temporary mode: serve blog data from in-memory JSON instead of DB.
 // Set to false when switching back to Mongo-backed blogs.
-const USE_DUMMY_BLOGS = true;
+const USE_DUMMY_BLOGS = false; // Changed to false to use real DB
+
+/**
+ * Ensure semantic HTML structure for SEO
+ */
+function ensureSemanticStructure(html) {
+  if (!html || typeof html !== 'string') return '<div class="blog-content"><p>No content</p></div>';
+  
+  // Remove empty divs and ensure proper structure
+  let structured = html.trim();
+  
+  // If content doesn't start with a semantic tag, wrap it
+  if (!structured.match(/^<(h[1-6]|p|div|article|section|ul|ol|blockquote)/i)) {
+    // Check if it has any HTML tags at all
+    if (!structured.includes('<')) {
+      // Plain text - wrap in paragraphs
+      const paragraphs = structured.split(/\n\n+/).filter(p => p.trim());
+      structured = paragraphs.map(p => `<p>${p.trim()}</p>`).join('\n');
+    }
+    structured = `<div class="blog-content">${structured}</div>`;
+  }
+  
+  // Ensure headings are properly structured (H1 should be first if present)
+  // Convert multiple H1s to H2s (only one H1 per page for SEO)
+  let h1Count = 0;
+  structured = structured.replace(/<h1[^>]*>/gi, (match) => {
+    h1Count++;
+    if (h1Count > 1) {
+      return '<h2>';
+    }
+    return match;
+  });
+  
+  // Ensure images have alt attributes for SEO
+  structured = structured.replace(/<img([^>]*)>/gi, (match, attrs) => {
+    if (!attrs.includes('alt=')) {
+      return `<img${attrs} alt="">`;
+    }
+    return match;
+  });
+  
+  // Ensure links have proper attributes
+  structured = structured.replace(/<a([^>]*)>/gi, (match, attrs) => {
+    if (!attrs.includes('href=')) {
+      return match; // Skip invalid links
+    }
+    let newAttrs = attrs;
+    if (!attrs.includes('target=') && attrs.includes('http')) {
+      newAttrs += ' target="_blank" rel="noopener noreferrer"';
+    }
+    return `<a${newAttrs}>`;
+  });
+  
+  return structured;
+}
 
 const nowIso = new Date().toISOString();
 let dummyBlogs = [
@@ -159,6 +214,9 @@ const paginate = (items, page = 1, limit = 10) => {
  */
 exports.getAllBlogs = async (req, res) => {
   try {
+    // Ensure DB connection
+    await connectDB();
+    
     if (USE_DUMMY_BLOGS) {
       const { status, category, search, page = 1, limit = 10 } = req.query;
       let blogs = [...dummyBlogs];
@@ -381,6 +439,17 @@ exports.getBlogById = async (req, res) => {
  */
 exports.createBlog = async (req, res) => {
   try {
+    // Ensure DB connection
+    try {
+      await connectDB();
+    } catch (dbError) {
+      console.error('DB connection error:', dbError);
+      return res.status(500).json({
+        success: false,
+        error: 'Database connection failed. Please try again.'
+      });
+    }
+    
     if (USE_DUMMY_BLOGS) {
       const body = req.body || {};
       const title = body.title || 'Untitled';
@@ -446,8 +515,11 @@ exports.createBlog = async (req, res) => {
       creationMode // 'html' or 'builder'
     } = req.body;
 
-    // Sanitize HTML content
+    // Sanitize and structure HTML content for SEO
     let sanitizedContent = sanitizeHTML(content);
+    
+    // Ensure proper semantic HTML structure
+    sanitizedContent = ensureSemanticStructure(sanitizedContent);
 
     // Extract meta tags if HTML upload mode
     let extractedMeta = {};
@@ -537,9 +609,11 @@ exports.createBlog = async (req, res) => {
     const blog = new Blog(blogData);
     await blog.save();
 
-    // Update sitemap asynchronously
-    generateSitemap().catch(err => {
-      console.error('Error updating sitemap:', err);
+    // Update sitemap asynchronously (don't wait)
+    setImmediate(() => {
+      generateSitemap().catch(err => {
+        console.error('Error updating sitemap:', err);
+      });
     });
 
     res.status(201).json({
@@ -558,6 +632,9 @@ exports.createBlog = async (req, res) => {
  */
 exports.updateBlog = async (req, res) => {
   try {
+    // Ensure DB connection
+    await connectDB();
+    
     if (USE_DUMMY_BLOGS) {
       const { id } = req.params;
       const idx = dummyBlogs.findIndex(b => b._id === id);
@@ -584,6 +661,7 @@ exports.updateBlog = async (req, res) => {
     // Sanitize content if provided
     if (updateData.content) {
       updateData.content = sanitizeHTML(updateData.content);
+      updateData.content = ensureSemanticStructure(updateData.content);
       
       // Recalculate reading time
       const text = extractText(updateData.content);
@@ -661,10 +739,12 @@ exports.updateBlog = async (req, res) => {
       { new: true, runValidators: true }
     );
 
-    // Update sitemap asynchronously if status changed to published
+    // Update sitemap asynchronously if status changed to published (don't wait)
     if (updateData.status === 'published' || (blog.status !== 'published' && updatedBlog.status === 'published')) {
-      generateSitemap().catch(err => {
-        console.error('Error updating sitemap:', err);
+      setImmediate(() => {
+        generateSitemap().catch(err => {
+          console.error('Error updating sitemap:', err);
+        });
       });
     }
 
@@ -865,6 +945,17 @@ exports.getRelatedBlogs = async (req, res) => {
  */
 exports.generateAIBlog = async (req, res) => {
   try {
+    // Ensure DB connection first
+    try {
+      await connectDB();
+    } catch (dbError) {
+      console.error('DB connection error in generateAIBlog:', dbError);
+      return res.status(500).json({
+        success: false,
+        error: 'Database connection failed. Please try again.'
+      });
+    }
+
     const {
       topic,
       blogType,
@@ -1030,8 +1121,8 @@ ${toolsForLinking.map(t => `  - ${t.name}: ${t.url} - ${t.description}`).join('\
     const metaResponse = await metaResult.response;
     let generatedMeta = metaResponse.text().trim().replace(/["']/g, '');
 
-    // Sanitize generated content
-    const sanitizedContent = sanitizeHTML(generatedContent);
+    // Sanitize generated content and ensure semantic structure
+    const sanitizedContent = ensureSemanticStructure(sanitizeHTML(generatedContent));
 
     // Generate slug
     const baseSlug = generateSlug(generatedTitle);
@@ -1072,19 +1163,37 @@ ${toolsForLinking.map(t => `  - ${t.name}: ${t.url} - ${t.description}`).join('\
     };
 
     // Save to database
-    const blog = new Blog(blogData);
-    await blog.save();
+    try {
+      const blog = new Blog(blogData);
+      await blog.save();
 
-    // Update sitemap (async, don't wait)
-    generateSitemap().catch(err => {
-      console.error('Error updating sitemap:', err);
-    });
+      // Update sitemap (async, don't wait)
+      setImmediate(() => {
+        generateSitemap().catch(err => {
+          console.error('Error updating sitemap:', err);
+        });
+      });
 
-    res.json({
-      success: true,
-      data: blog,
-      message: 'Blog generated successfully. Review and publish when ready.'
-    });
+      res.json({
+        success: true,
+        data: blog,
+        message: 'Blog generated successfully. Review and publish when ready.'
+      });
+    } catch (saveError) {
+      console.error('Error saving blog:', saveError);
+      // If it's a duplicate slug error, try with timestamp
+      if (saveError.code === 11000 || saveError.message.includes('duplicate')) {
+        blogData.slug = `${blogData.slug}-${Date.now()}`;
+        const blog = new Blog(blogData);
+        await blog.save();
+        return res.json({
+          success: true,
+          data: blog,
+          message: 'Blog generated successfully. Review and publish when ready.'
+        });
+      }
+      throw saveError;
+    }
   } catch (error) {
     console.error('AI blog generation error:', error);
     res.status(500).json({

@@ -153,11 +153,29 @@ blogSchema.index({ scheduledDate: 1, status: 1 });
 
 // Pre-save middleware to update slug if title changes
 blogSchema.pre('save', function(next) {
-  if (this.isModified('title') && !this.isModified('slug')) {
-    this.slug = this.generateSlug(this.title);
+  try {
+    if (this.isModified('title') && !this.isModified('slug') && this.title) {
+      // Generate slug from title
+      const slug = this.title
+        .toLowerCase()
+        .trim()
+        .replace(/[^\w\s-]/g, '') // Remove special characters
+        .replace(/\s+/g, '-') // Replace spaces with hyphens
+        .replace(/-+/g, '-') // Replace multiple hyphens with single
+        .substring(0, 100); // Limit length
+      this.slug = slug;
+    }
+    this.updatedAt = Date.now();
+    if (typeof next === 'function') {
+      next();
+    }
+  } catch (error) {
+    if (typeof next === 'function') {
+      next(error);
+    } else {
+      throw error;
+    }
   }
-  this.updatedAt = Date.now();
-  next();
 });
 
 // Method to generate slug from title
