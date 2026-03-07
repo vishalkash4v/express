@@ -64,24 +64,79 @@ function ensureSemanticStructure(html) {
     return match;
   });
   
-  // Ensure images have alt attributes for SEO
+  // Ensure images have alt attributes, loading="lazy", and responsive styles for SEO and performance
   structured = structured.replace(/<img([^>]*)>/gi, (match, attrs) => {
-    if (!attrs.includes('alt=')) {
-      return `<img${attrs} alt="">`;
+    let newAttrs = attrs;
+    if (!newAttrs.includes('alt=')) {
+      newAttrs += ' alt=""';
     }
-    return match;
+    if (!newAttrs.includes('loading=')) {
+      newAttrs += ' loading="lazy"';
+    }
+    if (!newAttrs.includes('style=') && !newAttrs.includes('width=')) {
+      newAttrs += ' style="max-width: 100%; height: auto;"';
+    }
+    return `<img${newAttrs}>`;
   });
   
-  // Ensure links have proper attributes
+  // Ensure links have proper attributes for SEO and security
   structured = structured.replace(/<a([^>]*)>/gi, (match, attrs) => {
     if (!attrs.includes('href=')) {
       return match; // Skip invalid links
     }
     let newAttrs = attrs;
-    if (!attrs.includes('target=') && attrs.includes('http')) {
-      newAttrs += ' target="_blank" rel="noopener noreferrer"';
+    // External links
+    if (attrs.includes('http') && !attrs.includes('fyntools.com')) {
+      if (!attrs.includes('target=')) {
+        newAttrs += ' target="_blank"';
+      }
+      if (!attrs.includes('rel=')) {
+        newAttrs += ' rel="noopener noreferrer"';
+      }
+    }
+    // Internal links - ensure they're crawlable
+    if (attrs.includes('fyntools.com') || attrs.includes('href="/')) {
+      // Remove nofollow from internal links
+      newAttrs = newAttrs.replace(/rel=["'][^"']*nofollow[^"']*["']/gi, '');
     }
     return `<a${newAttrs}>`;
+  });
+  
+  // Add data-label attributes to table cells for mobile responsiveness
+  structured = structured.replace(/<table([^>]*)>([\s\S]*?)<\/table>/gi, (match, tableAttrs, tableContent) => {
+    // Extract header row to get column names
+    const headerMatch = tableContent.match(/<thead>[\s\S]*?<tr[^>]*>(.*?)<\/tr>[\s\S]*?<\/thead>/i);
+    if (headerMatch) {
+      const headers = headerMatch[1].match(/<th[^>]*>(.*?)<\/th>/gi) || [];
+      const headerTexts = headers.map(h => h.replace(/<[^>]*>/g, '').trim());
+      
+      // Add data-label to each td
+      let newTableContent = tableContent.replace(/<tbody>([\s\S]*?)<\/tbody>/gi, (tbodyMatch, tbodyContent) => {
+        const rows = tbodyContent.match(/<tr[^>]*>([\s\S]*?)<\/tr>/gi) || [];
+        let newTbodyContent = rows.map((row, rowIndex) => {
+          const cells = row.match(/<td[^>]*>(.*?)<\/td>/gi) || [];
+          let newRow = row;
+          cells.forEach((cell, cellIndex) => {
+            if (headerTexts[cellIndex] && !cell.includes('data-label=')) {
+              const label = headerTexts[cellIndex];
+              newRow = newRow.replace(
+                cell,
+                cell.replace(/<td([^>]*)>/, `<td$1 data-label="${label}">`)
+              );
+            }
+          });
+          return newRow;
+        }).join('');
+        return `<tbody>${newTbodyContent}</tbody>`;
+      });
+      
+      // Wrap complex tables for horizontal scroll
+      if (headers.length > 4) {
+        return `<div class="table-wrapper"><table${tableAttrs}>${newTableContent}</table></div>`;
+      }
+      return `<table${tableAttrs}>${newTableContent}</table>`;
+    }
+    return match;
   });
   
   return structured;
@@ -984,47 +1039,194 @@ exports.generateAIBlog = async (req, res) => {
 
     const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
-    // Get tools for internal linking
-    const toolsForLinking = [
-      { name: 'Word Counter', url: 'https://fyntools.com/word-counter', description: 'Count words and characters' },
-      { name: 'AI Text Rewriter', url: 'https://fyntools.com/ai-text-rewriter', description: 'Rewrite content with AI' },
-      { name: 'Text Case Converter', url: 'https://fyntools.com/text-case-converter', description: 'Convert text cases' },
-      { name: 'URL Shortener', url: 'https://fyntools.com/url-shortener', description: 'Shorten URLs' },
-      { name: 'Image Compressor', url: 'https://fyntools.com/image-compressor', description: 'Compress images' },
-      { name: 'JSON Formatter', url: 'https://fyntools.com/json-formatter', description: 'Format JSON' },
-      { name: 'Base64 Converter', url: 'https://fyntools.com/base64-converter', description: 'Encode/decode Base64' },
-      { name: 'QR Code Generator', url: 'https://fyntools.com/qr-code-generator', description: 'Generate QR codes' },
-      { name: 'Password Generator', url: 'https://fyntools.com/password-generator', description: 'Generate secure passwords' },
-      { name: 'BMI Calculator', url: 'https://fyntools.com/bmi-calculator', description: 'Calculate BMI' },
+    // Check if topic is about a specific tool
+    let toolInfo = null;
+    const topicLower = topic.toLowerCase().trim();
+    
+    // Comprehensive tools database with features
+    const toolsDatabase = [
+      { 
+        name: 'Word Counter', 
+        id: 'word-counter', 
+        url: 'https://fyntools.com/word-counter', 
+        description: 'Count words, characters, and paragraphs in your text', 
+        category: 'Text & Writing Tools', 
+        keywords: 'word count, character count, text analysis, writing tools',
+        features: 'Real-time word and character counting, paragraph counting, reading time estimation, character count with/without spaces, word frequency analysis'
+      },
+      { 
+        name: 'AI Text Rewriter', 
+        id: 'ai-text-rewriter', 
+        url: 'https://fyntools.com/ai-text-rewriter', 
+        description: 'Rewrite your content to make it unique and avoid AI detection', 
+        category: 'Text & Writing Tools', 
+        keywords: 'ai rewriter, content rewrite, plagiarism, unique content, ai detection',
+        features: 'Multiple writing styles (professional, casual, creative, academic, simple), creativity level control (1-10), natural human-like rewriting, maintains original meaning, AI detection avoidance'
+      },
+      { 
+        name: 'Text Case Converter', 
+        id: 'text-case-converter', 
+        url: 'https://fyntools.com/text-case-converter', 
+        description: 'Convert text between uppercase, lowercase, and title case', 
+        category: 'Text & Writing Tools', 
+        keywords: 'uppercase, lowercase, title case, text transform, case converter',
+        features: 'Uppercase, lowercase, title case, sentence case conversion, instant conversion, copy to clipboard, batch processing'
+      },
+      { 
+        name: 'URL Shortener', 
+        id: 'url-shortener', 
+        url: 'https://fyntools.com/url-shortener', 
+        description: 'Shorten long URLs into short, shareable links', 
+        category: 'Utilities', 
+        keywords: 'url shortener, link shortener, shorten url, url compressor',
+        features: 'Custom alias support, click tracking, QR code generation, expiration dates, password protection, analytics dashboard'
+      },
+      { 
+        name: 'Image Compressor', 
+        id: 'image-compressor', 
+        url: 'https://fyntools.com/image-compressor', 
+        description: 'Compress images to reduce file size while maintaining quality', 
+        category: 'Image Tools', 
+        keywords: 'image compressor, compress photos, optimize images, reduce image size',
+        features: 'Quality control slider, batch compression, format conversion, before/after comparison, drag and drop interface, mobile optimization'
+      },
+      { 
+        name: 'JSON Formatter', 
+        id: 'json-formatter', 
+        url: 'https://fyntools.com/json-formatter', 
+        description: 'Format and validate JSON data with syntax highlighting', 
+        category: 'Developer Tools', 
+        keywords: 'json formatter, format json, json validator, json beautifier',
+        features: 'Syntax highlighting, error detection, minify/beautify, tree view, copy formatted JSON, validate JSON structure'
+      },
+      { 
+        name: 'Base64 Converter', 
+        id: 'base64-converter', 
+        url: 'https://fyntools.com/base64-converter', 
+        description: 'Encode and decode Base64 strings', 
+        category: 'Text & Writing Tools', 
+        keywords: 'base64, encode, decode, base64 converter, encryption',
+        features: 'Encode text to Base64, decode Base64 to text, file encoding support, URL-safe encoding, instant conversion'
+      },
+      { 
+        name: 'QR Code Generator', 
+        id: 'qr-code-generator', 
+        url: 'https://fyntools.com/qr-code-generator', 
+        description: 'Generate QR codes for URLs, text, and more', 
+        category: 'Utilities', 
+        keywords: 'qr code, qr generator, generate qr, qr code maker',
+        features: 'Custom colors and sizes, error correction levels, logo embedding, download as PNG/SVG, batch generation, different QR types (URL, text, email, phone)'
+      },
+      { 
+        name: 'Password Generator', 
+        id: 'password-generator', 
+        url: 'https://fyntools.com/password-generator', 
+        description: 'Generate secure, random passwords with customizable options', 
+        category: 'Security Tools', 
+        keywords: 'password generator, secure password, random password, strong password',
+        features: 'Customizable length, include/exclude numbers, symbols, uppercase, lowercase, memorable passwords option, strength indicator, copy to clipboard'
+      },
+      { 
+        name: 'BMI Calculator', 
+        id: 'bmi-calculator', 
+        url: 'https://fyntools.com/bmi-calculator', 
+        description: 'Calculate Body Mass Index (BMI) with metric and imperial units', 
+        category: 'Calculators', 
+        keywords: 'bmi calculator, body mass index, health calculator, bmi calculator online',
+        features: 'Metric and imperial units, BMI category classification, health recommendations, age and gender considerations, visual BMI chart'
+      },
     ];
 
-    // Blog type templates
+    // Enhanced matching - check name, id, keywords, and description
+    for (const tool of toolsDatabase) {
+      const nameMatch = topicLower.includes(tool.name.toLowerCase());
+      const idMatch = topicLower.includes(tool.id.replace(/-/g, ' '));
+      const keywordMatch = tool.keywords.split(', ').some(kw => topicLower.includes(kw.toLowerCase()));
+      const descMatch = tool.description.toLowerCase().split(' ').some(word => topicLower.includes(word));
+      
+      if (nameMatch || idMatch || keywordMatch || descMatch) {
+        toolInfo = tool;
+        break;
+      }
+    }
+
+    // Get tools for internal linking
+    const toolsForLinking = toolsDatabase;
+
+    // Build tool-specific context if tool is found
+    let toolContext = '';
+    if (toolInfo) {
+      toolContext = `\n\nCRITICAL - TOOL-SPECIFIC BLOG REQUIREMENTS:
+You are writing about "${toolInfo.name}" - a REAL, ACTIVE tool available at ${toolInfo.url}
+
+Tool Information (USE THIS EXACT DATA):
+- Tool Name: ${toolInfo.name}
+- Category: ${toolInfo.category}
+- Description: ${toolInfo.description}
+- Key Features: ${toolInfo.features}
+- Tool URL: ${toolInfo.url}
+
+REQUIREMENTS FOR TOOL BLOG:
+1. Analyze the tool's features thoroughly - mention specific features from the list above
+2. Explain HOW the tool works - step-by-step usage instructions
+3. Describe WHAT problems it solves - real-world scenarios
+4. Explain WHO benefits from it - target audience
+5. Include practical examples - show actual use cases
+6. Compare with alternatives if relevant - but highlight why this tool is better
+7. Include screenshots/features descriptions - be specific about what the tool does
+8. Write as if you've personally tested and used the tool
+9. Be honest about limitations if any
+10. Include a call-to-action to try the tool at ${toolInfo.url}
+
+Make the blog comprehensive, practical, and feature-focused. Readers should understand exactly what the tool does and how to use it.`;
+
+      // Update topic to be more specific
+      topic = toolInfo.name;
+    }
+
+    // Blog type templates with human-readable, simple writing style
     const blogTypePrompts = {
-      'how-to': `Write a comprehensive "How to" guide about ${topic}. Include step-by-step instructions, practical tips, and actionable advice.`,
-      'best': `Write an article about "Best ${topic}" - a comparison and review article highlighting top options, features, and recommendations.`,
-      'top': `Write a "Top ${topic}" article - a ranked list with detailed explanations of each item, pros and cons, and recommendations.`,
-      'guide': `Write a complete guide about ${topic} - covering everything from basics to advanced concepts with examples.`,
-      'tutorial': `Write a tutorial about ${topic} - a step-by-step learning guide with examples and practical exercises.`,
-      'comparison': `Write a comparison article about ${topic} - comparing different options, tools, or approaches with pros and cons.`,
-      'review': `Write a review article about ${topic} - detailed analysis, features, benefits, and drawbacks.`,
-      'tips': `Write a tips and tricks article about ${topic} - practical advice, shortcuts, and best practices.`,
-      'what-is': `Write a "What is ${topic}" article - explaining the concept, definition, uses, and importance.`,
-      'why': `Write a "Why ${topic}" article - explaining reasons, benefits, and importance of the topic.`
+      'how-to': `Write a simple, easy-to-understand "How to" guide about ${topic}. Use everyday language that anyone can understand. Write like a helpful friend explaining something, not like a formal manual.`,
+      'best': `Write a friendly article about "Best ${topic}" - compare options in a conversational way, like you're recommending to a friend. Be honest about pros and cons.`,
+      'top': `Write a "Top ${topic}" article - create a ranked list but explain each item in simple terms. Use casual language and real examples.`,
+      'guide': `Write a complete guide about ${topic} - explain everything from basics to advanced, but keep it simple and easy to follow. Use plain English.`,
+      'tutorial': `Write a tutorial about ${topic} - step-by-step instructions in simple language. Make it feel like you're teaching a friend, not writing documentation.`,
+      'comparison': `Write a comparison article about ${topic} - compare different options in a friendly, conversational way. Help readers understand which one fits their needs.`,
+      'review': `Write a review article about ${topic} - share honest thoughts about features, benefits, and drawbacks. Write like you're telling a friend about your experience.`,
+      'tips': `Write a tips and tricks article about ${topic} - share practical advice in a friendly, helpful way. Use simple language and real examples.`,
+      'what-is': `Write a "What is ${topic}" article - explain the concept in the simplest way possible. Use everyday examples and avoid jargon.`,
+      'why': `Write a "Why ${topic}" article - explain reasons and benefits in a clear, simple way. Help readers understand why it matters.`
     };
 
     const typePrompt = blogTypePrompts[blogType] || blogTypePrompts['guide'];
 
-    // Build the prompt
-    let prompt = `${typePrompt}
+    // Build the prompt with human-readable writing style (like AI rewriter with creativity 10/10)
+    let prompt = `${typePrompt}${toolContext}
 
-Requirements:
+WRITING STYLE REQUIREMENTS (CRITICAL - Follow these exactly):
+- Write in SIMPLE, HUMAN-READABLE language - like a real person talking, not AI
+- Use everyday words - avoid complex jargon unless necessary
+- Write with CREATIVITY LEVEL 10/10 - make it engaging and natural
+- Vary sentence length - mix short and long sentences naturally
+- Use contractions (don't, can't, it's) to sound more human
+- Add personality - be friendly, helpful, and conversational
+- Use "you" and "your" to connect with readers
+- Include natural transitions between ideas
+- Write like you're explaining to a friend, not writing a formal document
+- Make it feel authentic and genuine - avoid robotic or overly formal language
+- Use examples from real life
+- Add a bit of personality and warmth
+
+Content Requirements:
 - Write approximately ${wordCount} words
 - Use clear headings (H2, H3) for structure
 - Include practical examples and use cases
-- Write in a professional yet engaging tone
-- Make it SEO-friendly with natural keyword usage
+- Make it SEO-friendly with natural keyword usage (don't stuff keywords)
 - Use proper HTML formatting (h2, h3, p, ul, ol, strong, em tags)
-- Do NOT include title tags or meta tags in the content`;
+- Do NOT include title tags or meta tags in the content
+- Write in paragraphs - each paragraph should be 3-5 sentences
+- Use bullet points and lists where helpful
+- Make it scannable with good headings`;
 
     if (includeInternalLinks) {
       prompt += `\n\nInternal Linking Requirements:
@@ -1038,32 +1240,94 @@ ${toolsForLinking.map(t => `  - ${t.name}: ${t.url} - ${t.description}`).join('\
     }
 
     if (includeExternalLinks) {
-      prompt += `\n\nExternal Linking Requirements:
-- Include 2-3 relevant external links to authoritative sources
-- Use reputable websites (Wikipedia, official documentation, industry blogs)
-- Format as: <a href="https://example.com" target="_blank" rel="noopener noreferrer">Link Text</a>
-- Make external links contextually relevant and add value`;
+      prompt += `\n\nExternal Linking Requirements (MANDATORY - You MUST include these):
+- Include EXACTLY 2-3 relevant external links to authoritative sources
+- Use reputable websites like:
+  * Wikipedia (https://en.wikipedia.org/wiki/[topic])
+  * Official documentation sites
+  * Industry blogs and resources
+  * Educational websites
+- Format EXACTLY as: <a href="https://example.com" target="_blank" rel="noopener noreferrer">Descriptive Link Text</a>
+- Make external links contextually relevant - place them naturally in the content where they add value
+- Use descriptive anchor text (e.g., "According to Wikipedia" or "Learn more about this on [site name]")
+- DO NOT skip external links - they are required and must appear in the final content
+- Place at least one external link in the introduction or first section
+- Place another external link in a middle section
+- Make sure the links are actually clickable HTML, not just text`;
     }
 
     if (targetKeywords) {
-      prompt += `\n\nTarget Keywords: ${targetKeywords}\n- Naturally incorporate these keywords throughout the content
-- Use variations and related terms
-- Ensure keyword density is natural (1-2% max)`;
+      const keywords = targetKeywords.split(',').map(k => k.trim());
+      const primaryKeyword = keywords[0];
+      const secondaryKeywords = keywords.slice(1).join(', ');
+      
+      prompt += `\n\nSEO Keyword Strategy (2026 Google Requirements):
+Primary Keyword: "${primaryKeyword}"
+${secondaryKeywords ? `Secondary Keywords: ${secondaryKeywords}` : ''}
+
+Keyword Placement Requirements:
+1. Use primary keyword 4-6 times naturally throughout content (0.8-1.5% density)
+2. Use primary keyword in:
+   - First 100 words (introduction)
+   - At least one H2 heading
+   - At least one image alt text
+   - Conclusion paragraph
+3. Use secondary keywords 5-10 times naturally
+4. Include LSI (semantic) keywords - related terms and synonyms
+5. Use keyword variations - don't repeat exact same phrase
+6. Natural keyword usage - avoid keyword stuffing
+7. Keyword density should be 0.8% - 1.5% for primary keyword
+8. Use keywords in context - they should make sense in sentences`;
     }
 
-    prompt += `\n\nOutput Format:
+    // Determine word count based on blog type (2026 Google recommendations)
+    const recommendedWordCounts = {
+      'informational': Math.max(1200, wordCount),
+      'comparison': Math.max(1500, wordCount),
+      'guide': Math.max(2500, wordCount),
+      'how-to': Math.max(1200, wordCount),
+      'best': Math.max(1500, wordCount),
+      'top': Math.max(1500, wordCount),
+      'tutorial': Math.max(1200, wordCount),
+      'review': Math.max(1500, wordCount),
+      'tips': Math.max(1200, wordCount),
+      'what-is': Math.max(1200, wordCount),
+      'why': Math.max(1200, wordCount)
+    };
+    
+    const finalWordCount = recommendedWordCounts[blogType] || wordCount;
+    const needsTOC = finalWordCount > 1200;
+
+    // Determine if TOC is needed based on word count
+    const needsTOC = finalWordCount > 1200;
+    
+    prompt += `\n\nOutput Format (2026 SEO Best Practices - CRITICAL):
 - Return ONLY the HTML content (no title, no meta tags)
 - Use proper HTML structure with semantic tags
-- Start with an engaging introduction paragraph
-- Include at least 3-4 main sections with H2 headings
+- Word count: Approximately ${finalWordCount} words (this is CRITICAL for SEO ranking)
+${needsTOC ? '- MUST Include a Table of Contents (TOC) at the beginning with jump links to all H2 and H3 sections\n  Format: <div class="table-of-contents"><h2>Table of Contents</h2><ul><li><a href="#section-slug">Section Name</a></li></ul></div>' : ''}
+- Start with an engaging introduction paragraph (80-120 words)
+- Include at least 4-6 main sections with H2 headings
+- Use H3 for subsections under each H2
+- Add unique IDs to all H2 and H3 headings: <h2 id="section-name">Heading</h2>
+- Include at least one comparison table if relevant (use proper <table>, <thead>, <tbody>, <tr>, <th>, <td> tags)
+- For tables: Add data-label attributes to ALL table cells for mobile: <td data-label="Column Name">content</td>
+- Wrap complex tables (>4 columns) in: <div class="table-wrapper"><table>...</table></div>
+- Include 3-5 FAQ questions with answers at the end (format as: <h2 id="faq">Frequently Asked Questions</h2><div class="faq-item"><h3>Question?</h3><p>Answer...</p></div>)
 - End with a conclusion paragraph
-- Ensure all HTML is properly formatted and valid`;
+- Ensure all HTML is properly formatted and valid
+- Use proper heading hierarchy: H1 (title - not in content), H2 (main sections), H3 (subsections), H4 (if needed)
+- Include images with proper alt text: <img src="url" alt="descriptive alt text" loading="lazy" style="max-width: 100%; height: auto;" />
+- Use semantic HTML: <article>, <section>, <aside> where appropriate
+- Paragraphs should be 2-3 lines (15-20 words per sentence)
+- Use bullet lists and tables for scannability`;
 
-    // Try to get a model
+    // Try to get a model with high creativity settings (like AI rewriter)
     const models = [
-      'gemini-2.0-flash-exp',
       'gemini-2.5-flash-lite',
       'gemini-2.5-flash',
+      'gemini-2.0-flash-exp',
+      'gemini-2.0-flash',
       'gemini-1.5-flash-latest',
       'gemini-1.5-flash',
       'gemini-pro'
@@ -1074,7 +1338,15 @@ ${toolsForLinking.map(t => `  - ${t.name}: ${t.url} - ${t.description}`).join('\
 
     for (const modelName of models) {
       try {
-        model = genAI.getGenerativeModel({ model: modelName });
+        // Use high creativity settings (10/10 = 1.0 temperature) like AI rewriter
+        model = genAI.getGenerativeModel({ 
+          model: modelName,
+          generationConfig: {
+            temperature: 1.0, // Maximum creativity (10/10)
+            topP: 0.95,
+            topK: 40,
+          }
+        });
         await model.generateContent('test'); // Test if model works
         break;
       } catch (err) {
@@ -1087,10 +1359,24 @@ ${toolsForLinking.map(t => `  - ${t.name}: ${t.url} - ${t.description}`).join('\
       throw new Error(`No working Gemini model found. Last error: ${lastError?.message || 'Unknown'}`);
     }
 
-    // Generate content
+    // Generate content with high creativity
     const result = await model.generateContent(prompt);
     const response = await result.response;
     let generatedContent = response.text();
+    
+    // Verify external links are present if required
+    if (includeExternalLinks) {
+      const externalLinkPattern = /<a\s+href=["']https?:\/\/(?!fyntools\.com)[^"']+["'][^>]*>/gi;
+      const externalLinksFound = (generatedContent.match(externalLinkPattern) || []).length;
+      
+      if (externalLinksFound < 2) {
+        // Regenerate with stronger emphasis on external links
+        const enhancedPrompt = prompt + `\n\nCRITICAL: You did not include enough external links. You MUST add at least 2-3 external links (links to websites other than fyntools.com) in the content. Make sure they are proper HTML anchor tags with href attributes.`;
+        const retryResult = await model.generateContent(enhancedPrompt);
+        const retryResponse = await retryResult.response;
+        generatedContent = retryResponse.text();
+      }
+    }
 
     // Clean up the content
     generatedContent = generatedContent
@@ -1103,26 +1389,142 @@ ${toolsForLinking.map(t => `  - ${t.name}: ${t.url} - ${t.description}`).join('\
       generatedContent = `<div class="blog-content">\n${generatedContent}\n</div>`;
     }
 
-    // Generate title
-    const titlePrompt = `Generate a compelling, SEO-friendly blog title (60 characters max) for this topic: ${topic}, blog type: ${blogType}. Return ONLY the title, no quotes, no extra text.`;
+    // Generate SEO-optimized title (50-60 characters, includes primary keyword)
+    const primaryKeyword = targetKeywords ? targetKeywords.split(',')[0].trim() : topic.split(' ')[0];
+    const titlePrompt = `Generate a compelling, SEO-friendly blog title (50-60 characters, max 600px width) for this topic: ${topic}, blog type: ${blogType}. 
+Requirements:
+- Include primary keyword: "${primaryKeyword}"
+- Add year "2026" if relevant
+- Make it readable and click-worthy
+- 50-60 characters maximum
+- Return ONLY the title, no quotes, no extra text.`;
     const titleResult = await model.generateContent(titlePrompt);
     const titleResponse = await titleResult.response;
     let generatedTitle = titleResponse.text().trim().replace(/["']/g, '');
+    // Ensure it's within limit
+    if (generatedTitle.length > 60) {
+      generatedTitle = generatedTitle.substring(0, 57) + '...';
+    }
 
-    // Generate excerpt
-    const excerptPrompt = `Generate a compelling blog excerpt (150-200 characters) for a blog about: ${topic}. Return ONLY the excerpt, no quotes, no extra text.`;
+    // Generate excerpt (150-200 characters)
+    const excerptPrompt = `Generate a compelling blog excerpt (150-200 characters) for a blog about: ${topic}. 
+Requirements:
+- Include primary keyword naturally
+- Explain what user will learn
+- Make it engaging
+- Return ONLY the excerpt, no quotes, no extra text.`;
     const excerptResult = await model.generateContent(excerptPrompt);
     const excerptResponse = await excerptResult.response;
     let generatedExcerpt = excerptResponse.text().trim().replace(/["']/g, '');
+    if (generatedExcerpt.length > 200) {
+      generatedExcerpt = generatedExcerpt.substring(0, 197) + '...';
+    }
 
-    // Generate meta description
-    const metaPrompt = `Generate an SEO meta description (150-160 characters) for a blog about: ${topic}. Return ONLY the meta description, no quotes, no extra text.`;
+    // Generate meta description (150-160 characters, includes primary keyword + CTA)
+    const metaPrompt = `Generate an SEO meta description (150-160 characters, max 920px) for a blog about: ${topic}. 
+Requirements:
+- Include primary keyword: "${primaryKeyword}"
+- Add a call-to-action (CTA)
+- Make it readable and compelling
+- 150-160 characters maximum
+- Return ONLY the meta description, no quotes, no extra text.`;
     const metaResult = await model.generateContent(metaPrompt);
     const metaResponse = await metaResult.response;
     let generatedMeta = metaResponse.text().trim().replace(/["']/g, '');
+    if (generatedMeta.length > 160) {
+      generatedMeta = generatedMeta.substring(0, 157) + '...';
+    }
+    
+    // Generate comprehensive keywords list (20-40 keywords)
+    const keywordsPrompt = `Generate a comprehensive keyword list (20-40 keywords) for a blog about: ${topic}, blog type: ${blogType}.
+Include:
+- Primary keyword: "${primaryKeyword}"
+- Secondary keywords (5-10)
+- Long-tail keywords (5-10)
+- LSI (semantic) keywords (10-20)
+Return as comma-separated list, no quotes, no extra text.`;
+    const keywordsResult = await model.generateContent(keywordsPrompt);
+    const keywordsResponse = await keywordsResult.response;
+    let generatedKeywords = keywordsResponse.text().trim().replace(/["']/g, '');
 
+    // Add table of contents if needed (for blogs > 1200 words)
+    let finalContent = generatedContent;
+    if (needsTOC && !finalContent.toLowerCase().includes('table of contents') && !finalContent.toLowerCase().includes('table-of-contents')) {
+      // Extract headings for TOC
+      const headingMatches = finalContent.match(/<h[2-3][^>]*>(.*?)<\/h[2-3]>/gi);
+      if (headingMatches && headingMatches.length > 2) {
+        let toc = '<div class="table-of-contents"><h2>Table of Contents</h2><ul>';
+        const usedSlugs = new Set();
+        
+        headingMatches.forEach((heading) => {
+          const text = heading.replace(/<[^>]*>/g, '').trim();
+          if (!text) return;
+          
+          const level = heading.match(/<h([2-3])/)?.[1] || '2';
+          let slug = text.toLowerCase()
+            .replace(/[^\w\s-]/g, '')
+            .replace(/\s+/g, '-')
+            .replace(/-+/g, '-')
+            .substring(0, 50);
+          
+          // Ensure unique slugs
+          let uniqueSlug = slug;
+          let counter = 1;
+          while (usedSlugs.has(uniqueSlug)) {
+            uniqueSlug = `${slug}-${counter}`;
+            counter++;
+          }
+          usedSlugs.add(uniqueSlug);
+          
+          const indent = level === '3' ? '<li style="margin-left: 1.5rem;">' : '<li>';
+          toc += `${indent}<a href="#${uniqueSlug}">${text}</a></li>`;
+          
+          // Add ID to heading if not already present
+          if (!heading.includes('id=')) {
+            finalContent = finalContent.replace(
+              heading,
+              heading.replace(/<h([2-3])([^>]*)>/, `<h$1$2 id="${uniqueSlug}">`)
+            );
+          }
+        });
+        toc += '</ul></div>';
+        
+        // Insert TOC after first paragraph or after intro
+        const firstP = finalContent.indexOf('</p>');
+        if (firstP > -1) {
+          finalContent = finalContent.slice(0, firstP + 4) + '\n' + toc + '\n' + finalContent.slice(firstP + 4);
+        } else {
+          finalContent = toc + '\n' + finalContent;
+        }
+      }
+    }
+    
+    // Ensure FAQ section has proper structure
+    if (finalContent.includes('FAQ') || finalContent.includes('Frequently Asked Questions')) {
+      // Wrap FAQ items properly
+      finalContent = finalContent.replace(
+        /<h2[^>]*>.*?FAQ.*?<\/h2>/gi,
+        '<h2 id="faq">Frequently Asked Questions</h2>'
+      );
+    } else {
+      // Add FAQ section if missing
+      const faqPrompt = `Generate 3-5 FAQ questions and answers about: ${topic}. 
+Format as HTML:
+<h2 id="faq">Frequently Asked Questions</h2>
+<div class="faq-item"><h3>Question?</h3><p>Answer...</p></div>
+Return ONLY the FAQ HTML, no extra text.`;
+      try {
+        const faqResult = await model.generateContent(faqPrompt);
+        const faqResponse = await faqResult.response;
+        const faqContent = faqResponse.text().trim().replace(/["']/g, '');
+        finalContent += '\n\n' + faqContent;
+      } catch (err) {
+        console.error('Error generating FAQ:', err);
+      }
+    }
+    
     // Sanitize generated content and ensure semantic structure
-    const sanitizedContent = ensureSemanticStructure(sanitizeHTML(generatedContent));
+    const sanitizedContent = ensureSemanticStructure(sanitizeHTML(finalContent));
 
     // Generate slug
     const baseSlug = generateSlug(generatedTitle);
@@ -1139,20 +1541,30 @@ ${toolsForLinking.map(t => `  - ${t.name}: ${t.url} - ${t.description}`).join('\
     const wordCountActual = text.split(/\s+/).length;
     const readingTime = Math.ceil(wordCountActual / 200);
 
-    // Prepare blog data
+    // Prepare comprehensive keywords list
+    const allKeywords = targetKeywords 
+      ? [...targetKeywords.split(',').map(t => t.trim()), ...generatedKeywords.split(',').map(k => k.trim())]
+      : generatedKeywords.split(',').map(k => k.trim());
+    const uniqueKeywords = [...new Set(allKeywords.filter(k => k.length > 0))].slice(0, 40);
+    
+    // Prepare blog data with full SEO optimization
     const blogData = {
       title: generatedTitle,
       slug,
       content: sanitizedContent,
       excerpt: generatedExcerpt.substring(0, 300),
       category: category || 'General',
-      tags: targetKeywords ? targetKeywords.split(',').map(t => t.trim()) : [],
-      metaTitle: generatedMeta.substring(0, 60),
-      metaDescription: generatedMeta.substring(0, 160),
-      focusKeyword: targetKeywords ? targetKeywords.split(',')[0].trim() : '',
+      tags: uniqueKeywords.slice(0, 10), // Top 10 tags
+      metaTitle: generatedTitle.substring(0, 60), // 50-60 chars
+      metaDescription: generatedMeta.substring(0, 160), // 150-160 chars
+      focusKeyword: targetKeywords ? targetKeywords.split(',')[0].trim() : primaryKeyword,
+      keywords: uniqueKeywords.join(', '), // Full keyword list for meta
       canonicalUrl: `https://fyntools.com/blog/${slug}`,
       ogTitle: generatedTitle.substring(0, 60),
       ogDescription: generatedExcerpt.substring(0, 160),
+      ogImage: toolInfo ? `${toolInfo.url}/og-image.jpg` : '',
+      twitterTitle: generatedTitle.substring(0, 70),
+      twitterDescription: generatedExcerpt.substring(0, 200),
       status: 'draft', // Save as draft so admin can review
       publishDate: new Date(),
       readingTime,

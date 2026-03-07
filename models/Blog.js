@@ -54,6 +54,11 @@ const blogSchema = new mongoose.Schema({
     trim: true,
     default: ''
   },
+  keywords: {
+    type: String,
+    trim: true,
+    default: ''
+  },
   canonicalUrl: {
     type: String,
     default: ''
