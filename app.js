@@ -25,6 +25,7 @@ var dummyapisRouter = require('./routes/apis/dummyapis.routes');
 var imagesRouter = require('./routes/images');
 var blogRouter = require('./routes/blog');
 var sitemapRouter = require('./routes/sitemap');
+var toolsRouter = require('./routes/tools');
 var { connectDB } = require('./utils/db');
 
 // Connect to MongoDB on startup (for serverless, connection is cached)
@@ -72,6 +73,7 @@ app.use('/api/trips', activityRouter);
 app.use('/apis/v2', dummyapisRouter);
 app.use('/api/images', imagesRouter);
 app.use('/api/blog', blogRouter);
+app.use('/api/tools', toolsRouter);
 app.use('/api/cron', require('./routes/cron')); // Vercel cron routes
 app.use('/', sitemapRouter); // Sitemap at root level
 

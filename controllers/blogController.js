@@ -1,4 +1,5 @@
 const Blog = require('../models/Blog');
+const Tool = require('../models/Tool');
 const { sanitizeHTML, extractText, extractMetaTags } = require('../utils/htmlSanitizer');
 const { generateSlug, generateUniqueSlug } = require('../utils/slugGenerator');
 const { generateSitemap } = require('../utils/sitemapGenerator');
@@ -102,41 +103,15 @@ function ensureSemanticStructure(html) {
     return `<a${newAttrs}>`;
   });
   
-  // Add data-label attributes to table cells for mobile responsiveness
+  // Wrap all tables in table-wrapper for mobile responsiveness (2026 Best Practice)
   structured = structured.replace(/<table([^>]*)>([\s\S]*?)<\/table>/gi, (match, tableAttrs, tableContent) => {
-    // Extract header row to get column names
-    const headerMatch = tableContent.match(/<thead>[\s\S]*?<tr[^>]*>(.*?)<\/tr>[\s\S]*?<\/thead>/i);
-    if (headerMatch) {
-      const headers = headerMatch[1].match(/<th[^>]*>(.*?)<\/th>/gi) || [];
-      const headerTexts = headers.map(h => h.replace(/<[^>]*>/g, '').trim());
-      
-      // Add data-label to each td
-      let newTableContent = tableContent.replace(/<tbody>([\s\S]*?)<\/tbody>/gi, (tbodyMatch, tbodyContent) => {
-        const rows = tbodyContent.match(/<tr[^>]*>([\s\S]*?)<\/tr>/gi) || [];
-        let newTbodyContent = rows.map((row, rowIndex) => {
-          const cells = row.match(/<td[^>]*>(.*?)<\/td>/gi) || [];
-          let newRow = row;
-          cells.forEach((cell, cellIndex) => {
-            if (headerTexts[cellIndex] && !cell.includes('data-label=')) {
-              const label = headerTexts[cellIndex];
-              newRow = newRow.replace(
-                cell,
-                cell.replace(/<td([^>]*)>/, `<td$1 data-label="${label}">`)
-              );
-            }
-          });
-          return newRow;
-        }).join('');
-        return `<tbody>${newTbodyContent}</tbody>`;
-      });
-      
-      // Wrap complex tables for horizontal scroll
-      if (headers.length > 4) {
-        return `<div class="table-wrapper"><table${tableAttrs}>${newTableContent}</table></div>`;
-      }
-      return `<table${tableAttrs}>${newTableContent}</table>`;
+    // Check if already wrapped
+    if (match.includes('table-wrapper')) {
+      return match;
     }
-    return match;
+    
+    // Always wrap tables for consistent mobile scrolling and styling
+    return `<div class="table-wrapper"><table${tableAttrs}>${tableContent}</table></div>`;
   });
   
   return structured;
@@ -1043,99 +1018,20 @@ exports.generateAIBlog = async (req, res) => {
     let toolInfo = null;
     const topicLower = topic.toLowerCase().trim();
     
-    // Comprehensive tools database with features
-    const toolsDatabase = [
-      { 
-        name: 'Word Counter', 
-        id: 'word-counter', 
-        url: 'https://fyntools.com/word-counter', 
-        description: 'Count words, characters, and paragraphs in your text', 
-        category: 'Text & Writing Tools', 
-        keywords: 'word count, character count, text analysis, writing tools',
-        features: 'Real-time word and character counting, paragraph counting, reading time estimation, character count with/without spaces, word frequency analysis'
-      },
-      { 
-        name: 'AI Text Rewriter', 
-        id: 'ai-text-rewriter', 
-        url: 'https://fyntools.com/ai-text-rewriter', 
-        description: 'Rewrite your content to make it unique and avoid AI detection', 
-        category: 'Text & Writing Tools', 
-        keywords: 'ai rewriter, content rewrite, plagiarism, unique content, ai detection',
-        features: 'Multiple writing styles (professional, casual, creative, academic, simple), creativity level control (1-10), natural human-like rewriting, maintains original meaning, AI detection avoidance'
-      },
-      { 
-        name: 'Text Case Converter', 
-        id: 'text-case-converter', 
-        url: 'https://fyntools.com/text-case-converter', 
-        description: 'Convert text between uppercase, lowercase, and title case', 
-        category: 'Text & Writing Tools', 
-        keywords: 'uppercase, lowercase, title case, text transform, case converter',
-        features: 'Uppercase, lowercase, title case, sentence case conversion, instant conversion, copy to clipboard, batch processing'
-      },
-      { 
-        name: 'URL Shortener', 
-        id: 'url-shortener', 
-        url: 'https://fyntools.com/url-shortener', 
-        description: 'Shorten long URLs into short, shareable links', 
-        category: 'Utilities', 
-        keywords: 'url shortener, link shortener, shorten url, url compressor',
-        features: 'Custom alias support, click tracking, QR code generation, expiration dates, password protection, analytics dashboard'
-      },
-      { 
-        name: 'Image Compressor', 
-        id: 'image-compressor', 
-        url: 'https://fyntools.com/image-compressor', 
-        description: 'Compress images to reduce file size while maintaining quality', 
-        category: 'Image Tools', 
-        keywords: 'image compressor, compress photos, optimize images, reduce image size',
-        features: 'Quality control slider, batch compression, format conversion, before/after comparison, drag and drop interface, mobile optimization'
-      },
-      { 
-        name: 'JSON Formatter', 
-        id: 'json-formatter', 
-        url: 'https://fyntools.com/json-formatter', 
-        description: 'Format and validate JSON data with syntax highlighting', 
-        category: 'Developer Tools', 
-        keywords: 'json formatter, format json, json validator, json beautifier',
-        features: 'Syntax highlighting, error detection, minify/beautify, tree view, copy formatted JSON, validate JSON structure'
-      },
-      { 
-        name: 'Base64 Converter', 
-        id: 'base64-converter', 
-        url: 'https://fyntools.com/base64-converter', 
-        description: 'Encode and decode Base64 strings', 
-        category: 'Text & Writing Tools', 
-        keywords: 'base64, encode, decode, base64 converter, encryption',
-        features: 'Encode text to Base64, decode Base64 to text, file encoding support, URL-safe encoding, instant conversion'
-      },
-      { 
-        name: 'QR Code Generator', 
-        id: 'qr-code-generator', 
-        url: 'https://fyntools.com/qr-code-generator', 
-        description: 'Generate QR codes for URLs, text, and more', 
-        category: 'Utilities', 
-        keywords: 'qr code, qr generator, generate qr, qr code maker',
-        features: 'Custom colors and sizes, error correction levels, logo embedding, download as PNG/SVG, batch generation, different QR types (URL, text, email, phone)'
-      },
-      { 
-        name: 'Password Generator', 
-        id: 'password-generator', 
-        url: 'https://fyntools.com/password-generator', 
-        description: 'Generate secure, random passwords with customizable options', 
-        category: 'Security Tools', 
-        keywords: 'password generator, secure password, random password, strong password',
-        features: 'Customizable length, include/exclude numbers, symbols, uppercase, lowercase, memorable passwords option, strength indicator, copy to clipboard'
-      },
-      { 
-        name: 'BMI Calculator', 
-        id: 'bmi-calculator', 
-        url: 'https://fyntools.com/bmi-calculator', 
-        description: 'Calculate Body Mass Index (BMI) with metric and imperial units', 
-        category: 'Calculators', 
-        keywords: 'bmi calculator, body mass index, health calculator, bmi calculator online',
-        features: 'Metric and imperial units, BMI category classification, health recommendations, age and gender considerations, visual BMI chart'
-      },
-    ];
+    // Fetch tools from database
+    await connectDB();
+    const toolsFromDB = await Tool.find({ isActive: true }).select('id name category description keywords url features');
+    
+    // Convert to format expected by blog generation
+    const toolsDatabase = toolsFromDB.map(tool => ({
+      name: tool.name,
+      id: tool.id,
+      url: tool.url,
+      description: tool.description,
+      category: tool.category,
+      keywords: tool.keywords,
+      features: tool.features
+    }));
 
     // Enhanced matching - check name, id, keywords, and description
     for (const tool of toolsDatabase) {
