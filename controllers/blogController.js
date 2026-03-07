@@ -1297,9 +1297,6 @@ Keyword Placement Requirements:
     
     const finalWordCount = recommendedWordCounts[blogType] || wordCount;
     const needsTOC = finalWordCount > 1200;
-
-    // Determine if TOC is needed based on word count
-    const needsTOC = finalWordCount > 1200;
     
     prompt += `\n\nOutput Format (2026 SEO Best Practices - CRITICAL):
 - Return ONLY the HTML content (no title, no meta tags)
