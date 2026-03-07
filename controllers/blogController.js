@@ -1,10 +1,12 @@
 const Blog = require('../models/Blog');
 const { sanitizeHTML, extractText, extractMetaTags } = require('../utils/htmlSanitizer');
 const { generateSlug, generateUniqueSlug } = require('../utils/slugGenerator');
+const { generateSitemap } = require('../utils/sitemapGenerator');
 const sharp = require('sharp');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs').promises;
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // Configure multer for image uploads
 const storage = multer.memoryStorage();
@@ -535,6 +537,11 @@ exports.createBlog = async (req, res) => {
     const blog = new Blog(blogData);
     await blog.save();
 
+    // Update sitemap asynchronously
+    generateSitemap().catch(err => {
+      console.error('Error updating sitemap:', err);
+    });
+
     res.status(201).json({
       success: true,
       data: blog,
@@ -653,6 +660,13 @@ exports.updateBlog = async (req, res) => {
       { $set: updateData },
       { new: true, runValidators: true }
     );
+
+    // Update sitemap asynchronously if status changed to published
+    if (updateData.status === 'published' || (blog.status !== 'published' && updatedBlog.status === 'published')) {
+      generateSitemap().catch(err => {
+        console.error('Error updating sitemap:', err);
+      });
+    }
 
     res.json({
       success: true,
@@ -843,5 +857,239 @@ exports.getRelatedBlogs = async (req, res) => {
   } catch (error) {
     console.error('Get related blogs error:', error);
     res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+/**
+ * Generate blog using AI (Gemini)
+ */
+exports.generateAIBlog = async (req, res) => {
+  try {
+    const {
+      topic,
+      blogType,
+      category,
+      targetKeywords,
+      includeInternalLinks = true,
+      includeExternalLinks = true,
+      wordCount = 1500
+    } = req.body;
+
+    if (!topic || !blogType) {
+      return res.status(400).json({
+        success: false,
+        error: 'Topic and blog type are required'
+      });
+    }
+
+    // Get Gemini API key
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+    if (!GEMINI_API_KEY) {
+      return res.status(500).json({
+        success: false,
+        error: 'Gemini API key not configured'
+      });
+    }
+
+    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+
+    // Get tools for internal linking
+    const toolsForLinking = [
+      { name: 'Word Counter', url: 'https://fyntools.com/word-counter', description: 'Count words and characters' },
+      { name: 'AI Text Rewriter', url: 'https://fyntools.com/ai-text-rewriter', description: 'Rewrite content with AI' },
+      { name: 'Text Case Converter', url: 'https://fyntools.com/text-case-converter', description: 'Convert text cases' },
+      { name: 'URL Shortener', url: 'https://fyntools.com/url-shortener', description: 'Shorten URLs' },
+      { name: 'Image Compressor', url: 'https://fyntools.com/image-compressor', description: 'Compress images' },
+      { name: 'JSON Formatter', url: 'https://fyntools.com/json-formatter', description: 'Format JSON' },
+      { name: 'Base64 Converter', url: 'https://fyntools.com/base64-converter', description: 'Encode/decode Base64' },
+      { name: 'QR Code Generator', url: 'https://fyntools.com/qr-code-generator', description: 'Generate QR codes' },
+      { name: 'Password Generator', url: 'https://fyntools.com/password-generator', description: 'Generate secure passwords' },
+      { name: 'BMI Calculator', url: 'https://fyntools.com/bmi-calculator', description: 'Calculate BMI' },
+    ];
+
+    // Blog type templates
+    const blogTypePrompts = {
+      'how-to': `Write a comprehensive "How to" guide about ${topic}. Include step-by-step instructions, practical tips, and actionable advice.`,
+      'best': `Write an article about "Best ${topic}" - a comparison and review article highlighting top options, features, and recommendations.`,
+      'top': `Write a "Top ${topic}" article - a ranked list with detailed explanations of each item, pros and cons, and recommendations.`,
+      'guide': `Write a complete guide about ${topic} - covering everything from basics to advanced concepts with examples.`,
+      'tutorial': `Write a tutorial about ${topic} - a step-by-step learning guide with examples and practical exercises.`,
+      'comparison': `Write a comparison article about ${topic} - comparing different options, tools, or approaches with pros and cons.`,
+      'review': `Write a review article about ${topic} - detailed analysis, features, benefits, and drawbacks.`,
+      'tips': `Write a tips and tricks article about ${topic} - practical advice, shortcuts, and best practices.`,
+      'what-is': `Write a "What is ${topic}" article - explaining the concept, definition, uses, and importance.`,
+      'why': `Write a "Why ${topic}" article - explaining reasons, benefits, and importance of the topic.`
+    };
+
+    const typePrompt = blogTypePrompts[blogType] || blogTypePrompts['guide'];
+
+    // Build the prompt
+    let prompt = `${typePrompt}
+
+Requirements:
+- Write approximately ${wordCount} words
+- Use clear headings (H2, H3) for structure
+- Include practical examples and use cases
+- Write in a professional yet engaging tone
+- Make it SEO-friendly with natural keyword usage
+- Use proper HTML formatting (h2, h3, p, ul, ol, strong, em tags)
+- Do NOT include title tags or meta tags in the content`;
+
+    if (includeInternalLinks) {
+      prompt += `\n\nInternal Linking Requirements:
+- Naturally include 3-5 internal links to relevant FYN Tools (use these exact URLs):
+${toolsForLinking.map(t => `  - ${t.name}: ${t.url} - ${t.description}`).join('\n')}
+- Links should be natural and contextually relevant
+- Use descriptive anchor text (e.g., "Try our Word Counter tool" instead of "click here")
+- Format links as: <a href="${toolsForLinking[0].url}">${toolsForLinking[0].name}</a>`;
+
+      prompt += `\n\nExample internal link format: <a href="https://fyntools.com/word-counter" target="_blank" rel="noopener">Word Counter tool</a>`;
+    }
+
+    if (includeExternalLinks) {
+      prompt += `\n\nExternal Linking Requirements:
+- Include 2-3 relevant external links to authoritative sources
+- Use reputable websites (Wikipedia, official documentation, industry blogs)
+- Format as: <a href="https://example.com" target="_blank" rel="noopener noreferrer">Link Text</a>
+- Make external links contextually relevant and add value`;
+    }
+
+    if (targetKeywords) {
+      prompt += `\n\nTarget Keywords: ${targetKeywords}\n- Naturally incorporate these keywords throughout the content
+- Use variations and related terms
+- Ensure keyword density is natural (1-2% max)`;
+    }
+
+    prompt += `\n\nOutput Format:
+- Return ONLY the HTML content (no title, no meta tags)
+- Use proper HTML structure with semantic tags
+- Start with an engaging introduction paragraph
+- Include at least 3-4 main sections with H2 headings
+- End with a conclusion paragraph
+- Ensure all HTML is properly formatted and valid`;
+
+    // Try to get a model
+    const models = [
+      'gemini-2.0-flash-exp',
+      'gemini-2.5-flash-lite',
+      'gemini-2.5-flash',
+      'gemini-1.5-flash-latest',
+      'gemini-1.5-flash',
+      'gemini-pro'
+    ];
+
+    let model = null;
+    let lastError = null;
+
+    for (const modelName of models) {
+      try {
+        model = genAI.getGenerativeModel({ model: modelName });
+        await model.generateContent('test'); // Test if model works
+        break;
+      } catch (err) {
+        lastError = err;
+        continue;
+      }
+    }
+
+    if (!model) {
+      throw new Error(`No working Gemini model found. Last error: ${lastError?.message || 'Unknown'}`);
+    }
+
+    // Generate content
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    let generatedContent = response.text();
+
+    // Clean up the content
+    generatedContent = generatedContent
+      .replace(/```html/g, '')
+      .replace(/```/g, '')
+      .trim();
+
+    // Ensure proper HTML structure
+    if (!generatedContent.startsWith('<')) {
+      generatedContent = `<div class="blog-content">\n${generatedContent}\n</div>`;
+    }
+
+    // Generate title
+    const titlePrompt = `Generate a compelling, SEO-friendly blog title (60 characters max) for this topic: ${topic}, blog type: ${blogType}. Return ONLY the title, no quotes, no extra text.`;
+    const titleResult = await model.generateContent(titlePrompt);
+    const titleResponse = await titleResult.response;
+    let generatedTitle = titleResponse.text().trim().replace(/["']/g, '');
+
+    // Generate excerpt
+    const excerptPrompt = `Generate a compelling blog excerpt (150-200 characters) for a blog about: ${topic}. Return ONLY the excerpt, no quotes, no extra text.`;
+    const excerptResult = await model.generateContent(excerptPrompt);
+    const excerptResponse = await excerptResult.response;
+    let generatedExcerpt = excerptResponse.text().trim().replace(/["']/g, '');
+
+    // Generate meta description
+    const metaPrompt = `Generate an SEO meta description (150-160 characters) for a blog about: ${topic}. Return ONLY the meta description, no quotes, no extra text.`;
+    const metaResult = await model.generateContent(metaPrompt);
+    const metaResponse = await metaResult.response;
+    let generatedMeta = metaResponse.text().trim().replace(/["']/g, '');
+
+    // Sanitize generated content
+    const sanitizedContent = sanitizeHTML(generatedContent);
+
+    // Generate slug
+    const baseSlug = generateSlug(generatedTitle);
+    const slug = await generateUniqueSlug(
+      baseSlug,
+      async (slug, excludeId) => {
+        const exists = await Blog.findOne({ slug, _id: { $ne: excludeId } });
+        return !!exists;
+      }
+    );
+
+    // Calculate reading time
+    const text = extractText(sanitizedContent);
+    const wordCountActual = text.split(/\s+/).length;
+    const readingTime = Math.ceil(wordCountActual / 200);
+
+    // Prepare blog data
+    const blogData = {
+      title: generatedTitle,
+      slug,
+      content: sanitizedContent,
+      excerpt: generatedExcerpt.substring(0, 300),
+      category: category || 'General',
+      tags: targetKeywords ? targetKeywords.split(',').map(t => t.trim()) : [],
+      metaTitle: generatedMeta.substring(0, 60),
+      metaDescription: generatedMeta.substring(0, 160),
+      focusKeyword: targetKeywords ? targetKeywords.split(',')[0].trim() : '',
+      canonicalUrl: `https://fyntools.com/blog/${slug}`,
+      ogTitle: generatedTitle.substring(0, 60),
+      ogDescription: generatedExcerpt.substring(0, 160),
+      status: 'draft', // Save as draft so admin can review
+      publishDate: new Date(),
+      readingTime,
+      author: req.user?.id || null,
+      isFeatured: false,
+      noIndex: false,
+      noFollow: false
+    };
+
+    // Save to database
+    const blog = new Blog(blogData);
+    await blog.save();
+
+    // Update sitemap (async, don't wait)
+    generateSitemap().catch(err => {
+      console.error('Error updating sitemap:', err);
+    });
+
+    res.json({
+      success: true,
+      data: blog,
+      message: 'Blog generated successfully. Review and publish when ready.'
+    });
+  } catch (error) {
+    console.error('AI blog generation error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to generate blog'
+    });
   }
 };

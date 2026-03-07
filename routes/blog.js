@@ -14,6 +14,7 @@ router.get('/:slug/related', blogController.getRelatedBlogs);
 router.get('/', authenticateAdmin, blogController.getAllBlogs);
 router.get('/admin/:id', authenticateAdmin, blogController.getBlogById);
 router.post('/', authenticateAdmin, blogController.createBlog);
+router.post('/generate-ai', authenticateAdmin, blogController.generateAIBlog);
 router.put('/:id', authenticateAdmin, blogController.updateBlog);
 router.delete('/:id', authenticateAdmin, blogController.deleteBlog);
 router.post('/upload-image', authenticateAdmin, blogController.uploadFeaturedImage);
