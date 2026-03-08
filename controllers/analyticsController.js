@@ -259,6 +259,174 @@ exports.trackPageView = async (req, res) => {
   }
 };
 
+// Get blog analytics (dedicated endpoint)
+exports.getBlogAnalytics = async (req, res) => {
+  try {
+    await connectDB();
+    
+    const { period = '30d' } = req.query;
+    
+    // Calculate date ranges
+    const endDate = new Date();
+    endDate.setHours(23, 59, 59, 999);
+    
+    let startDate = new Date();
+    let previousStartDate = new Date();
+    let previousEndDate = new Date();
+    
+    switch (period) {
+      case '7d':
+        startDate.setDate(endDate.getDate() - 7);
+        previousStartDate.setDate(endDate.getDate() - 14);
+        previousEndDate.setDate(endDate.getDate() - 8);
+        break;
+      case '30d':
+        startDate.setDate(endDate.getDate() - 30);
+        previousStartDate.setDate(endDate.getDate() - 60);
+        previousEndDate.setDate(endDate.getDate() - 31);
+        break;
+      case '90d':
+        startDate.setDate(endDate.getDate() - 90);
+        previousStartDate.setDate(endDate.getDate() - 180);
+        previousEndDate.setDate(endDate.getDate() - 91);
+        break;
+      case '1y':
+        startDate.setFullYear(endDate.getFullYear() - 1);
+        previousStartDate.setFullYear(endDate.getFullYear() - 2);
+        previousEndDate.setFullYear(endDate.getFullYear() - 1);
+        previousEndDate.setDate(previousEndDate.getDate() - 1);
+        break;
+      default:
+        startDate.setDate(endDate.getDate() - 30);
+        previousStartDate.setDate(endDate.getDate() - 60);
+        previousEndDate.setDate(endDate.getDate() - 31);
+    }
+    
+    startDate.setHours(0, 0, 0, 0);
+    previousStartDate.setHours(0, 0, 0, 0);
+    previousEndDate.setHours(23, 59, 59, 999);
+    
+    // Get blog analytics
+    const blogAnalytics = await getBlogAnalytics(startDate, endDate);
+    const previousBlogAnalytics = await getBlogAnalytics(previousStartDate, previousEndDate);
+    
+    // Calculate trends
+    const blogTrends = blogAnalytics.map(current => {
+      const previous = previousBlogAnalytics.find(p => p.blogId === current.blogId);
+      const previousViews = previous?.totalViews || 0;
+      const change = current.totalViews - previousViews;
+      const changePercent = previousViews > 0 
+        ? ((change / previousViews) * 100).toFixed(1)
+        : current.totalViews > 0 ? 100 : 0;
+      
+      return {
+        ...current,
+        previousViews,
+        change,
+        changePercent: parseFloat(changePercent),
+        trend: change > 0 ? 'up' : change < 0 ? 'down' : 'stable'
+      };
+    });
+    
+    // Get daily stats for blogs
+    const dailyStats = await Analytics.getDailyStats(startDate, endDate, 'blog');
+    
+    // Get category stats
+    const categoryStats = await Analytics.aggregate([
+      {
+        $match: {
+          pageType: 'blog',
+          date: { $gte: startDate, $lte: endDate }
+        }
+      },
+      {
+        $lookup: {
+          from: 'blogs',
+          localField: 'pageId',
+          foreignField: '_id',
+          as: 'blog'
+        }
+      },
+      {
+        $unwind: {
+          path: '$blog',
+          preserveNullAndEmptyArrays: true
+        }
+      },
+      {
+        $group: {
+          _id: '$blog.category',
+          views: { $sum: '$views' },
+          uniqueViews: { $sum: '$uniqueViews' },
+          blogCount: { $addToSet: '$pageId' }
+        }
+      },
+      {
+        $project: {
+          category: { $ifNull: ['$_id', 'Uncategorized'] },
+          views: 1,
+          uniqueViews: 1,
+          blogCount: { $size: '$blogCount' }
+        }
+      },
+      { $sort: { views: -1 } }
+    ]);
+    
+    // Calculate overview
+    const totalBlogViews = blogTrends.reduce((sum, blog) => sum + blog.totalViews, 0);
+    const totalUniqueViews = blogTrends.reduce((sum, blog) => sum + blog.totalUniqueViews, 0);
+    const previousTotalViews = previousBlogAnalytics.reduce((sum, blog) => sum + blog.totalViews, 0);
+    const change = totalBlogViews - previousTotalViews;
+    const changePercent = previousTotalViews > 0 
+      ? ((change / previousTotalViews) * 100).toFixed(1)
+      : totalBlogViews > 0 ? 100 : 0;
+    
+    const totalBlogs = await Blog.countDocuments();
+    const publishedBlogs = await Blog.countDocuments({ status: 'published' });
+    const averageViewsPerBlog = publishedBlogs > 0 ? Math.round(totalBlogViews / publishedBlogs) : 0;
+    
+    res.json({
+      success: true,
+      data: {
+        period,
+        dateRange: {
+          start: startDate,
+          end: endDate
+        },
+        overview: {
+          totalBlogViews,
+          totalUniqueViews,
+          previousTotalViews,
+          change,
+          changePercent: parseFloat(changePercent),
+          totalBlogs,
+          publishedBlogs,
+          averageViewsPerBlog
+        },
+        blogAnalytics: blogTrends,
+        categoryStats: categoryStats.map(stat => ({
+          category: stat.category,
+          views: stat.views,
+          uniqueViews: stat.uniqueViews,
+          blogCount: stat.blogCount
+        })),
+        dailyStats: dailyStats.map(stat => ({
+          date: stat.date,
+          views: stat.totalViews,
+          uniqueViews: stat.totalUniqueViews,
+          blogCount: stat.pageCount
+        }))
+      }
+    });
+  } catch (error) {
+    console.error('Get blog analytics error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch blog analytics'
+    });
+  }
+};
+
 // Get page analytics
 exports.getPageAnalytics = async (req, res) => {
   try {
