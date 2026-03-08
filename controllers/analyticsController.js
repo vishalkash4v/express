@@ -3,6 +3,54 @@ const Blog = require('../models/Blog');
 const Tool = require('../models/Tool');
 const { connectDB } = require('../utils/db');
 
+// Helper to get blog analytics
+async function getBlogAnalytics(startDate, endDate) {
+  const blogStats = await Analytics.aggregate([
+    {
+      $match: {
+        pageType: 'blog',
+        date: { $gte: startDate, $lte: endDate }
+      }
+    },
+    {
+      $group: {
+        _id: '$pageId',
+        totalViews: { $sum: '$views' },
+        totalUniqueViews: { $sum: '$uniqueViews' },
+        daysActive: { $sum: 1 },
+        pageTitle: { $first: '$pageTitle' },
+        pagePath: { $first: '$pagePath' }
+      }
+    },
+    { $sort: { totalViews: -1 } },
+    { $limit: 10 }
+  ]);
+  
+  // Get blog details from Blog model
+  const blogIds = blogStats.map(stat => stat._id);
+  const blogs = await Blog.find({ _id: { $in: blogIds } }).select('_id title slug category publishDate viewCount').lean();
+  
+  const blogMap = new Map();
+  blogs.forEach(blog => {
+    blogMap.set(blog._id.toString(), blog);
+  });
+  
+  return blogStats.map(stat => {
+    const blog = blogMap.get(stat._id);
+    return {
+      blogId: stat._id,
+      title: blog?.title || stat.pageTitle,
+      slug: blog?.slug || '',
+      category: blog?.category || '',
+      publishDate: blog?.publishDate || null,
+      totalViews: stat.totalViews,
+      totalUniqueViews: stat.totalUniqueViews,
+      daysActive: stat.daysActive,
+      dbViewCount: blog?.viewCount || 0
+    };
+  });
+}
+
 // Get dashboard analytics overview
 exports.getDashboardAnalytics = async (req, res) => {
   try {
@@ -107,6 +155,30 @@ exports.getDashboardAnalytics = async (req, res) => {
     const blogCount = await Blog.countDocuments({ status: 'published' });
     const toolCount = await Tool.countDocuments({ isActive: true });
     
+    // Get blog performance analytics
+    const blogAnalytics = await getBlogAnalytics(startDate, endDate);
+    
+    // Get previous period blog analytics for comparison
+    const previousBlogAnalytics = await getBlogAnalytics(previousStartDate, previousEndDate);
+    
+    // Calculate blog trends
+    const blogTrends = blogAnalytics.map(current => {
+      const previous = previousBlogAnalytics.find(p => p.blogId === current.blogId);
+      const previousViews = previous?.totalViews || 0;
+      const change = current.totalViews - previousViews;
+      const changePercent = previousViews > 0 
+        ? ((change / previousViews) * 100).toFixed(1)
+        : current.totalViews > 0 ? 100 : 0;
+      
+      return {
+        ...current,
+        previousViews,
+        change,
+        changePercent: parseFloat(changePercent),
+        trend: change > 0 ? 'up' : change < 0 ? 'down' : 'stable'
+      };
+    });
+    
     res.json({
       success: true,
       data: {
@@ -124,6 +196,7 @@ exports.getDashboardAnalytics = async (req, res) => {
           blogCount,
           toolCount
         },
+        blogAnalytics: blogTrends,
         dailyStats: dailyStats.map(stat => ({
           date: stat.date,
           views: stat.totalViews,
@@ -154,6 +227,9 @@ exports.trackPageView = async (req, res) => {
   try {
     await connectDB();
     
+    // Get client IP for unique view detection (optional)
+    const clientIp = req.ip || req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || 'unknown';
+    
     const { pageType, pageId, pagePath, pageTitle } = req.body;
     
     if (!pageType || !pageId || !pagePath) {
@@ -163,18 +239,20 @@ exports.trackPageView = async (req, res) => {
       });
     }
     
-    // Simple unique view detection (can be enhanced with session/IP tracking)
-    const isUnique = true; // For now, treat all as unique
+    // For now, treat all views as unique (can be enhanced with session/IP tracking)
+    const isUnique = true;
     
     await Analytics.incrementView(pageType, pageId, pagePath, pageTitle || '', isUnique);
     
-    res.json({
+    // Return success immediately (don't wait for response)
+    res.status(200).json({
       success: true,
       message: 'Page view tracked'
     });
   } catch (error) {
     console.error('Track page view error:', error);
-    res.status(500).json({
+    // Still return success to not break user experience
+    res.status(200).json({
       success: false,
       error: 'Failed to track page view'
     });
