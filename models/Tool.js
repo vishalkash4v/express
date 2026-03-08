@@ -66,7 +66,7 @@ var toolSchema = new mongoose.Schema({
 });
 
 // Indexes for faster queries
-toolSchema.index({ id: 1 }, { unique: true });
+// Note: id index is automatically created by unique: true in field definition
 toolSchema.index({ category: 1 });
 toolSchema.index({ isActive: 1 });
 toolSchema.index({ viewCount: -1 }); // For sorting by views

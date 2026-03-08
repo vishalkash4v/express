@@ -14,6 +14,7 @@ var userSchema = new mongoose.Schema({
     default: null,
     trim: true,
     lowercase: true,
+    unique: true,
     sparse: true,
     match: [/^\S+@\S+\.\S+$/, 'Please enter a valid email']
   },
@@ -21,6 +22,7 @@ var userSchema = new mongoose.Schema({
     type: String,
     default: null,
     trim: true,
+    unique: true,
     sparse: true
   },
   password: {
@@ -41,9 +43,8 @@ var userSchema = new mongoose.Schema({
 });
 
 // Indexes
+// Note: email and phoneNumber indexes are automatically created by unique: true in field definitions
 userSchema.index({ username: 1 }, { unique: true });
-userSchema.index({ email: 1 }, { unique: true, sparse: true });
-userSchema.index({ phoneNumber: 1 }, { unique: true, sparse: true });
 
 // Hash password before saving
 userSchema.pre('save', async function() {
