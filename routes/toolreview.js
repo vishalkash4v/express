@@ -155,14 +155,28 @@ router.get('/admin/reviews', authenticateToken, async function (req, res) {
             .sort({ createdAt: -1 })
             .skip(skip)
             .limit(parseInt(limit))
-            .select('-__v');
+            .select('-__v')
+            .lean();
 
         const total = await ToolReview.countDocuments(query);
+
+        // Mark unique vs repeated reviewer (same IP leaving multiple reviews for this tool)
+        const ipCounts = await ToolReview.aggregate([
+            { $match: query },
+            { $group: { _id: '$ipAddress', count: { $sum: 1 } } }
+        ]);
+        const ipCountMap = Object.fromEntries(ipCounts.map(r => [r._id, r.count]));
+
+        const reviewsWithType = reviews.map(r => ({
+            ...r,
+            reviewerType: (ipCountMap[r.ipAddress] || 1) > 1 ? 'repeated' : 'unique',
+            reviewCountByIp: ipCountMap[r.ipAddress] || 1
+        }));
 
         res.json({
             success: true,
             data: {
-                reviews,
+                reviews: reviewsWithType,
                 total,
                 page: parseInt(page),
                 totalPages: Math.ceil(total / parseInt(limit))

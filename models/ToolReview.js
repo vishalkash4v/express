@@ -63,7 +63,7 @@ toolReviewSchema.statics.getToolStats = async function(toolName, toolUrl) {
   return stats[0] || { likes: 0, dislikes: 0, total: 0 };
 };
 
-// Static method to get all tools with stats
+// Static method to get all tools with stats (sorted by latest review first)
 toolReviewSchema.statics.getAllToolsStats = async function() {
   const stats = await this.aggregate([
     {
@@ -75,7 +75,8 @@ toolReviewSchema.statics.getAllToolsStats = async function() {
         likes: { $sum: { $cond: [{ $eq: ['$rating', 1] }, 1, 0] } },
         dislikes: { $sum: { $cond: [{ $eq: ['$rating', 0] }, 1, 0] } },
         total: { $sum: 1 },
-        reviews: { $sum: { $cond: [{ $ne: ['$feedback', null] }, 1, 0] } }
+        reviews: { $sum: { $cond: [{ $ne: ['$feedback', null] }, 1, 0] } },
+        lastReviewAt: { $max: '$createdAt' }
       }
     },
     {
@@ -86,12 +87,11 @@ toolReviewSchema.statics.getAllToolsStats = async function() {
         dislikes: 1,
         total: 1,
         reviews: 1,
+        lastReviewAt: 1,
         _id: 0
       }
     },
-    {
-      $sort: { total: -1 }
-    }
+    { $sort: { lastReviewAt: -1, total: -1 } }
   ]);
   
   return stats;
