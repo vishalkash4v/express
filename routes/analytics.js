@@ -17,6 +17,7 @@ router.get('/test', (req, res) => {
 
 // Admin routes (protected)
 router.get('/dashboard', authenticateAdmin, analyticsController.getDashboardAnalytics);
+router.get('/highlights', authenticateAdmin, analyticsController.getPositiveHighlights);
 router.get('/blog', authenticateAdmin, analyticsController.getBlogAnalytics);
 router.get('/page', authenticateAdmin, analyticsController.getPageAnalytics);
 

@@ -1,7 +1,89 @@
 const Analytics = require('../models/Analytics');
+const PageViewSession = require('../models/PageViewSession');
 const Blog = require('../models/Blog');
 const Tool = require('../models/Tool');
 const { connectDB } = require('../utils/db');
+
+// Generate data-driven positive highlights for admin notifications
+function generatePositiveHighlights(data) {
+  const highlights = [];
+  if (!data) return highlights;
+
+  const { overview, topPages, trendingPages, blogAnalytics } = data;
+
+  if (overview?.totalUniqueViews > 0) {
+    highlights.push({
+      id: 'unique',
+      type: 'success',
+      message: `${overview.totalUniqueViews.toLocaleString()} unique visitors this period — real people discovering your tools!`,
+      icon: 'users'
+    });
+  }
+  if (overview?.changePercent > 0 && overview.changePercent >= 10) {
+    highlights.push({
+      id: 'growth',
+      type: 'trending',
+      message: `Traffic up ${overview.changePercent}% vs last period — your content is resonating!`,
+      icon: 'trending-up'
+    });
+  }
+  if (topPages?.[0]) {
+    const top = topPages[0];
+    highlights.push({
+      id: 'top-page',
+      type: 'star',
+      message: `Top performer: "${top.pageTitle}" with ${top.totalUniqueViews?.toLocaleString() || top.totalViews?.toLocaleString()} unique views`,
+      icon: 'award'
+    });
+  }
+  const trendingUp = trendingPages?.filter(p => p.trend === 'up' && p.changePercent > 15);
+  if (trendingUp?.length > 0) {
+    const best = trendingUp[0];
+    highlights.push({
+      id: 'trending',
+      type: 'fire',
+      message: `Trending: "${best.pageTitle}" +${best.changePercent}% — gaining momentum!`,
+      icon: 'fire'
+    });
+  }
+  const topBlog = blogAnalytics?.[0];
+  if (topBlog?.totalUniqueViews > 0) {
+    highlights.push({
+      id: 'blog',
+      type: 'blog',
+      message: `Your blog "${topBlog.title}" has ${topBlog.totalUniqueViews.toLocaleString()} unique readers`,
+      icon: 'file-text'
+    });
+  }
+  if (overview?.toolCount > 0 && overview.toolCount >= 10) {
+    highlights.push({
+      id: 'tools',
+      type: 'tools',
+      message: `${overview.toolCount} active tools helping users every day`,
+      icon: 'wrench'
+    });
+  }
+  if (overview?.totalViews > 0 && overview.totalUniqueViews > 0) {
+    const engagement = ((overview.totalUniqueViews / overview.totalViews) * 100).toFixed(0);
+    if (parseInt(engagement) >= 60) {
+      highlights.push({
+        id: 'engagement',
+        type: 'engagement',
+        message: `${engagement}% of views are unique visitors — great content stickiness!`,
+        icon: 'heart'
+      });
+    }
+  }
+  if (highlights.length === 0) {
+    highlights.push({
+      id: 'welcome',
+      type: 'welcome',
+      message: 'Your dashboard is ready. Keep creating — every new tool and blog brings value!',
+      icon: 'sparkles'
+    });
+  }
+  return highlights.slice(0, 6);
+}
 
 // Helper to get blog analytics
 async function getBlogAnalytics(startDate, endDate) {
@@ -179,39 +261,43 @@ exports.getDashboardAnalytics = async (req, res) => {
       };
     });
     
+    const responseData = {
+      period,
+      dateRange: {
+        start: startDate,
+        end: endDate
+      },
+      overview: {
+        totalViews: currentTotal,
+        totalUniqueViews: dailyStats.reduce((sum, day) => sum + day.totalUniqueViews, 0),
+        previousTotalViews: previousTotal,
+        change,
+        changePercent: parseFloat(changePercent),
+        blogCount,
+        toolCount
+      },
+      blogAnalytics: blogTrends,
+      dailyStats: dailyStats.map(stat => ({
+        date: stat.date,
+        views: stat.totalViews,
+        uniqueViews: stat.totalUniqueViews,
+        pageCount: stat.pageCount
+      })),
+      topPages,
+      trendingPages,
+      statsByType: statsByType.map(stat => ({
+        pageType: stat._id,
+        views: stat.totalViews,
+        uniqueViews: stat.totalUniqueViews,
+        pageCount: stat.pageCount
+      }))
+    };
+
+    responseData.positiveHighlights = generatePositiveHighlights(responseData);
+
     res.json({
       success: true,
-      data: {
-        period,
-        dateRange: {
-          start: startDate,
-          end: endDate
-        },
-        overview: {
-          totalViews: currentTotal,
-          totalUniqueViews: dailyStats.reduce((sum, day) => sum + day.totalUniqueViews, 0),
-          previousTotalViews: previousTotal,
-          change,
-          changePercent: parseFloat(changePercent),
-          blogCount,
-          toolCount
-        },
-        blogAnalytics: blogTrends,
-        dailyStats: dailyStats.map(stat => ({
-          date: stat.date,
-          views: stat.totalViews,
-          uniqueViews: stat.totalUniqueViews,
-          pageCount: stat.pageCount
-        })),
-        topPages,
-        trendingPages,
-        statsByType: statsByType.map(stat => ({
-          pageType: stat._id,
-          views: stat.totalViews,
-          uniqueViews: stat.totalUniqueViews,
-          pageCount: stat.pageCount
-        }))
-      }
+      data: responseData
     });
   } catch (error) {
     console.error('Get dashboard analytics error:', error);
@@ -222,15 +308,12 @@ exports.getDashboardAnalytics = async (req, res) => {
   }
 };
 
-// Track page view
+// Track page view (session-based unique view detection)
 exports.trackPageView = async (req, res) => {
   try {
     await connectDB();
     
-    // Get client IP for unique view detection (optional)
-    const clientIp = req.ip || req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || 'unknown';
-    
-    const { pageType, pageId, pagePath, pageTitle } = req.body;
+    const { pageType, pageId, pagePath, pageTitle, sessionId } = req.body;
     
     if (!pageType || !pageId || !pagePath) {
       return res.status(400).json({
@@ -238,24 +321,96 @@ exports.trackPageView = async (req, res) => {
         error: 'pageType, pageId, and pagePath are required'
       });
     }
-    
-    // For now, treat all views as unique (can be enhanced with session/IP tracking)
-    const isUnique = true;
-    
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    let isUnique = true;
+    if (sessionId && typeof sessionId === 'string') {
+      try {
+        const insertResult = await PageViewSession.create({
+          pageType,
+          pageId,
+          date: today,
+          sessionId: sessionId.substring(0, 128)
+        });
+        isUnique = !!insertResult;
+      } catch (err) {
+        if (err.code === 11000) {
+          isUnique = false;
+        } else {
+          throw err;
+        }
+      }
+    }
+
     await Analytics.incrementView(pageType, pageId, pagePath, pageTitle || '', isUnique);
     
-    // Return success immediately (don't wait for response)
     res.status(200).json({
       success: true,
       message: 'Page view tracked'
     });
   } catch (error) {
     console.error('Track page view error:', error);
-    // Still return success to not break user experience
     res.status(200).json({
       success: false,
       error: 'Failed to track page view'
     });
+  }
+};
+
+// Get positive highlights for admin notifications (data-driven, real-time)
+exports.getPositiveHighlights = async (req, res) => {
+  try {
+    await connectDB();
+    const { period = '7d' } = req.query;
+
+    const endDate = new Date();
+    endDate.setHours(23, 59, 59, 999);
+    const startDate = new Date();
+    const previousStartDate = new Date();
+    const previousEndDate = new Date();
+
+    switch (period) {
+      case '7d': startDate.setDate(endDate.getDate() - 7); previousStartDate.setDate(endDate.getDate() - 14); previousEndDate.setDate(endDate.getDate() - 8); break;
+      case '30d': startDate.setDate(endDate.getDate() - 30); previousStartDate.setDate(endDate.getDate() - 60); previousEndDate.setDate(endDate.getDate() - 31); break;
+      case '90d': startDate.setDate(endDate.getDate() - 90); previousStartDate.setDate(endDate.getDate() - 180); previousEndDate.setDate(endDate.getDate() - 91); break;
+      case '1y': startDate.setFullYear(endDate.getFullYear() - 1); previousStartDate.setFullYear(endDate.getFullYear() - 2); previousEndDate.setFullYear(endDate.getFullYear() - 1); previousEndDate.setDate(previousEndDate.getDate() - 1); break;
+      default: startDate.setDate(endDate.getDate() - 7); previousStartDate.setDate(endDate.getDate() - 14); previousEndDate.setDate(endDate.getDate() - 8);
+    }
+    startDate.setHours(0, 0, 0, 0);
+    previousStartDate.setHours(0, 0, 0, 0);
+    previousEndDate.setHours(23, 59, 59, 999);
+
+    const [dailyStats, topPages, trendingPages, statsByType, blogStats] = await Promise.all([
+      Analytics.getDailyStats(startDate, endDate),
+      Analytics.getTopPages(startDate, endDate, 5),
+      Analytics.getTrendingPages(startDate, endDate, previousStartDate, previousEndDate, 5),
+      Analytics.aggregate([{ $match: { date: { $gte: startDate, $lte: endDate } } }, { $group: { _id: null, totalViews: { $sum: '$views' }, totalUniqueViews: { $sum: '$uniqueViews' } } }]),
+      getBlogAnalytics(startDate, endDate)
+    ]);
+
+    const currentTotal = dailyStats.reduce((sum, d) => sum + d.totalViews, 0);
+    const totalUnique = dailyStats.reduce((sum, d) => sum + d.totalUniqueViews, 0);
+    const blogCount = await Blog.countDocuments({ status: 'published' });
+    const toolCount = await Tool.countDocuments({ isActive: true });
+
+    const previousStats = await Analytics.aggregate([{ $match: { date: { $gte: previousStartDate, $lte: previousEndDate } } }, { $group: { _id: null, totalViews: { $sum: '$views' }, totalUniqueViews: { $sum: '$uniqueViews' } } }]);
+    const previousTotal = previousStats[0]?.totalViews || 0;
+    const changePercent = previousTotal > 0 ? ((currentTotal - previousTotal) / previousTotal * 100).toFixed(1) : currentTotal > 0 ? 100 : 0;
+
+    const data = {
+      overview: { totalViews: currentTotal, totalUniqueViews: totalUnique, changePercent: parseFloat(changePercent), blogCount, toolCount },
+      topPages,
+      trendingPages,
+      blogAnalytics: blogStats
+    };
+    const highlights = generatePositiveHighlights(data);
+
+    res.json({ success: true, data: { highlights } });
+  } catch (error) {
+    console.error('Get highlights error:', error);
+    res.json({ success: true, data: { highlights: [{ id: 'welcome', type: 'welcome', message: 'Your dashboard is ready. Keep creating!', icon: 'sparkles' }] } });
   }
 };
 

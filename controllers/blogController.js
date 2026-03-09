@@ -426,16 +426,7 @@ exports.getBlogBySlug = async (req, res) => {
       console.error('Error incrementing view count:', err);
     });
 
-    // Track analytics (non-blocking)
-    const Analytics = require('../models/Analytics');
-    Analytics.incrementView(
-      'blog',
-      blog._id.toString(),
-      `/blog/${blog.slug}`,
-      blog.title
-    ).catch(err => {
-      console.error('Error tracking analytics:', err);
-    });
+    // Analytics tracked via frontend trackBlogView (session-based unique counting)
 
     res.json({ success: true, data: blog });
   } catch (error) {

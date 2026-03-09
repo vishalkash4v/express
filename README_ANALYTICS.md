@@ -77,12 +77,13 @@ Blog performance analytics are now included in the dashboard:
 - Trend indicators (up/down)
 - Category and publish date info
 
-## Unique Views
+## Unique Views (Session-Based Tracking)
 
-Currently, all views are treated as unique. To implement proper unique view detection:
-1. Add session/IP tracking
-2. Use cookies or localStorage to track unique visitors
-3. Update `isUnique` logic in `trackPageView` controller
+**Implemented:** Session-based unique view detection.
+1. **Frontend:** Generates a persistent `sessionId` (stored in localStorage, 30-day TTL)
+2. **Backend:** `PageViewSession` model stores (pageType, pageId, date, sessionId) with unique index
+3. **Logic:** Same session visiting same page on same day = 1 unique view; different sessions or days = counted separately
+4. **Privacy:** Session records auto-delete after 60 days (TTL index)
 
 ## Future Enhancements
 

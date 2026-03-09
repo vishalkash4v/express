@@ -227,17 +227,8 @@ exports.incrementViewCount = async (req, res) => {
         error: 'Tool not found'
       });
     }
-    
-    // Track analytics (non-blocking)
-    const Analytics = require('../models/Analytics');
-    Analytics.incrementView(
-      'tool',
-      toolId,
-      tool.path || tool.href || `/${toolId}`,
-      tool.name
-    ).catch(err => {
-      console.error('Error tracking analytics:', err);
-    });
+
+    // Analytics tracked via frontend trackToolView (session-based unique counting)
     
     res.json({
       success: true,
