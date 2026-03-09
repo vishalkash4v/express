@@ -1025,70 +1025,61 @@ exports.generateAIBlog = async (req, res) => {
 
     const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
-    // Check if topic is about a specific tool
-    let toolInfo = null;
+    const originalTopic = topic.trim(); // Keep original for topic-first principle
     const topicLower = topic.toLowerCase().trim();
     
     // Fetch tools from database
     await connectDB();
     const toolsFromDB = await Tool.find({ isActive: true }).select('id name category description keywords url features');
     
-    // Convert to format expected by blog generation
     const toolsDatabase = toolsFromDB.map(tool => ({
       name: tool.name,
       id: tool.id,
       url: tool.url,
       description: tool.description,
       category: tool.category,
-      keywords: tool.keywords,
+      keywords: (tool.keywords || '').split(/,\s*/).map(k => k.trim().toLowerCase()).filter(Boolean),
       features: tool.features
     }));
 
-    // Enhanced matching - check name, id, keywords, and description
+    // STRICT tool matching - topic must clearly reference the tool (avoid false matches like "url" in Word Counter)
+    // Score: exact name/id phrase match = 10, multi-word keyword = 5, single generic word = 0 (ignore)
+    const genericWords = new Set(['url', 'text', 'image', 'pdf', 'link', 'tool', 'free', 'online', 'web', 'use', 'best', 'top']);
+    let toolInfo = null;
+    let bestScore = 0;
+    
     for (const tool of toolsDatabase) {
-      const nameMatch = topicLower.includes(tool.name.toLowerCase());
-      const idMatch = topicLower.includes(tool.id.replace(/-/g, ' '));
-      const keywordMatch = tool.keywords.split(', ').some(kw => topicLower.includes(kw.toLowerCase()));
-      const descMatch = tool.description.toLowerCase().split(' ').some(word => topicLower.includes(word));
-      
-      if (nameMatch || idMatch || keywordMatch || descMatch) {
+      const toolNameLower = tool.name.toLowerCase();
+      const toolIdPhrase = tool.id.replace(/-/g, ' ');
+      let score = 0;
+      // Topic must contain tool name or id as a phrase (2+ words or distinct term)
+      if (topicLower.includes(toolNameLower) || topicLower.includes(toolIdPhrase)) score = 10;
+      // Primary keywords (skip single generic words)
+      else for (const kw of tool.keywords.slice(0, 3)) {
+        if (kw.length < 3 || genericWords.has(kw)) continue;
+        if (topicLower.includes(kw)) score = Math.max(score, 5);
+      }
+      if (score > bestScore && score >= 5) {
+        bestScore = score;
         toolInfo = tool;
-        break;
       }
     }
 
-    // Get tools for internal linking
-    const toolsForLinking = toolsDatabase;
+    // Tools for internal linking: ONLY relevant tools. For non-tool topics = none.
+    let toolsForLinking = [];
+    if (toolInfo) {
+      toolsForLinking = [toolInfo, ...toolsDatabase.filter(t => t.category === toolInfo.category && t.id !== toolInfo.id)].slice(0, 4);
+    }
 
-    // Build tool-specific context if tool is found
+    // Build tool-specific context ONLY when topic clearly relates to a tool
     let toolContext = '';
     if (toolInfo) {
-      toolContext = `\n\nCRITICAL - TOOL-SPECIFIC BLOG REQUIREMENTS:
-You are writing about "${toolInfo.name}" - a REAL, ACTIVE tool available at ${toolInfo.url}
+      toolContext = `\n\nTOOL BLOG (topic matches FYN Tool - promote ONLY this tool):
+Primary tool to promote: ${toolInfo.name} (${toolInfo.url})
+- Include 2-4 natural mentions/links to this tool only
+- Do NOT promote or link to any OTHER FYN tools (no Word Counter, etc.)
+- Keep 90% of content about the topic; tool promotion is subtle, not the main focus`;
 
-Tool Information (USE THIS EXACT DATA):
-- Tool Name: ${toolInfo.name}
-- Category: ${toolInfo.category}
-- Description: ${toolInfo.description}
-- Key Features: ${toolInfo.features}
-- Tool URL: ${toolInfo.url}
-
-REQUIREMENTS FOR TOOL BLOG:
-1. Analyze the tool's features thoroughly - mention specific features from the list above
-2. Explain HOW the tool works - step-by-step usage instructions
-3. Describe WHAT problems it solves - real-world scenarios
-4. Explain WHO benefits from it - target audience
-5. Include practical examples - show actual use cases
-6. Compare with alternatives if relevant - but highlight why this tool is better
-7. Include screenshots/features descriptions - be specific about what the tool does
-8. Write as if you've personally tested and used the tool
-9. Be honest about limitations if any
-10. Include a call-to-action to try the tool at ${toolInfo.url}
-
-Make the blog comprehensive, practical, and feature-focused. Readers should understand exactly what the tool does and how to use it.`;
-
-      // Update topic to be more specific
-      topic = toolInfo.name;
     }
 
     // Blog type templates with human-readable, simple writing style
@@ -1107,8 +1098,18 @@ Make the blog comprehensive, practical, and feature-focused. Readers should unde
 
     const typePrompt = blogTypePrompts[blogType] || blogTypePrompts['guide'];
 
-    // Build the prompt with human-readable writing style (like AI rewriter with creativity 10/10)
-    let prompt = `${typePrompt}${toolContext}
+    // Topic-first: blog must stay on topic, never go off-topic or promote wrong tools
+    const topicFirstRule = `
+CRITICAL - TOPIC-FIRST RULE (non-negotiable):
+- This blog MUST be 100% about: "${originalTopic}"
+- Every section, every paragraph must relate to this exact topic
+- Do NOT go off-topic. Do NOT promote unrelated tools (e.g. do NOT mention Word Counter in a URL shortener blog)
+- For general topics (sports, news, events, etc.): Do NOT add any FYN Tools links - write purely about the topic
+- Stay focused. Be mature. Respect the reader's intent.`;
+
+    // Build the prompt with human-readable writing style
+    let prompt = `${topicFirstRule}
+${typePrompt}${toolContext}
 
 WRITING STYLE REQUIREMENTS (CRITICAL - Follow these exactly):
 - Write in SIMPLE, HUMAN-READABLE language - like a real person talking, not AI
@@ -1135,32 +1136,32 @@ Content Requirements:
 - Use bullet points and lists where helpful
 - Make it scannable with good headings`;
 
-    if (includeInternalLinks) {
-      prompt += `\n\nInternal Linking Requirements:
-- Naturally include 3-5 internal links to relevant FYN Tools (use these exact URLs):
-${toolsForLinking.map(t => `  - ${t.name}: ${t.url} - ${t.description}`).join('\n')}
-- Links should be natural and contextually relevant
-- Use descriptive anchor text (e.g., "Try our Word Counter tool" instead of "click here")
-- Format links as: <a href="${toolsForLinking[0].url}">${toolsForLinking[0].name}</a>`;
-
-      prompt += `\n\nExample internal link format: <a href="https://fyntools.com/word-counter" target="_blank" rel="noopener">Word Counter tool</a>`;
+    if (includeInternalLinks && toolsForLinking.length > 0) {
+      prompt += `\n\nInternal Linking (ONLY these tools - do NOT link to any other FYN tools):
+- Include 2-4 links ONLY to: ${toolsForLinking.map(t => t.name).join(', ')}
+${toolsForLinking.map(t => `- ${t.name}: ${t.url}`).join('\n')}
+- Format: <a href="${toolsForLinking[0].url}" target="_blank" rel="noopener">${toolsForLinking[0].name}</a>`;
+    } else if (includeInternalLinks && toolsForLinking.length === 0) {
+      prompt += `\n\nInternal Linking: This topic does NOT relate to FYN Tools. Do NOT add any internal links to tools. Write 100% about the topic.`;
     }
 
+    // Verified working external URLs (always resolve - no 404s)
+    const verifiedExternalUrls = [
+      'https://www.wikipedia.org',
+      'https://developer.mozilla.org',
+      'https://www.w3.org',
+      'https://www.bbc.com',
+    ];
+
     if (includeExternalLinks) {
-      prompt += `\n\nExternal Linking Requirements (MANDATORY - You MUST include these):
-- Include EXACTLY 2-3 relevant external links to authoritative sources
-- Use reputable websites like:
-  * Wikipedia (https://en.wikipedia.org/wiki/[topic])
-  * Official documentation sites
-  * Industry blogs and resources
-  * Educational websites
-- Format EXACTLY as: <a href="https://example.com" target="_blank" rel="noopener noreferrer">Descriptive Link Text</a>
-- Make external links contextually relevant - place them naturally in the content where they add value
-- Use descriptive anchor text (e.g., "According to Wikipedia" or "Learn more about this on [site name]")
-- DO NOT skip external links - they are required and must appear in the final content
-- Place at least one external link in the introduction or first section
-- Place another external link in a middle section
-- Make sure the links are actually clickable HTML, not just text`;
+      prompt += `\n\nEXTERNAL LINKS (MANDATORY - use REAL, WORKING URLs only):
+- Include 2-3 external links to authoritative sites (NOT fyntools.com)
+- Use GENUINE URLs from your knowledge - Wikipedia articles, MDN docs, BBC, Reuters, official sources
+- Only use URLs you KNOW exist and work - no placeholders or fake links
+- Guaranteed working URLs you may use: ${verifiedExternalUrls.join(', ')}
+- For topic "${originalTopic}" find relevant Wikipedia/MDN/tech articles - use actual article URLs
+- Format: <a href="https://real-url.com" target="_blank" rel="noopener noreferrer">Descriptive Text</a>
+- Place 1 link in intro, 1-2 in middle sections`;
     }
 
     if (targetKeywords) {
@@ -1268,17 +1269,48 @@ ${needsTOC ? '- MUST Include a Table of Contents (TOC) at the beginning with jum
     const response = await result.response;
     let generatedContent = response.text();
     
-    // Verify external links are present if required
+    // Verify external links are present if required; retry or inject fallback
+    const externalLinkPattern = /<a\s+href=["']https?:\/\/(?!fyntools\.com)[^"']+["'][^>]*>/gi;
+    const countExternalLinks = (html) => (html.match(externalLinkPattern) || []).length;
+
     if (includeExternalLinks) {
-      const externalLinkPattern = /<a\s+href=["']https?:\/\/(?!fyntools\.com)[^"']+["'][^>]*>/gi;
-      const externalLinksFound = (generatedContent.match(externalLinkPattern) || []).length;
+      let externalCount = countExternalLinks(generatedContent);
       
-      if (externalLinksFound < 2) {
-        // Regenerate with stronger emphasis on external links
-        const enhancedPrompt = prompt + `\n\nCRITICAL: You did not include enough external links. You MUST add at least 2-3 external links (links to websites other than fyntools.com) in the content. Make sure they are proper HTML anchor tags with href attributes.`;
-        const retryResult = await model.generateContent(enhancedPrompt);
-        const retryResponse = await retryResult.response;
-        generatedContent = retryResponse.text();
+      if (externalCount < 2) {
+        // Regenerate with stronger emphasis
+        const enhancedPrompt = prompt + `\n\nCRITICAL: Add 2-3 EXTERNAL links. Use these verified URLs: ${verifiedExternalUrls.slice(0, 3).join(', ')}. Output <a href="URL" target="_blank" rel="noopener noreferrer">Anchor</a> tags.`;
+        try {
+          const retryResult = await model.generateContent(enhancedPrompt);
+          const retryResponse = await retryResult.response;
+          generatedContent = retryResponse.text();
+          externalCount = countExternalLinks(generatedContent);
+        } catch (retryErr) {
+          console.warn('Retry for external links failed:', retryErr.message);
+        }
+
+        // Fallback: inject verified working external links if AI still didn't add them
+        if (externalCount < 2) {
+          const injectLinks = [
+            { url: 'https://www.wikipedia.org', anchor: 'Wikipedia' },
+            { url: 'https://developer.mozilla.org', anchor: 'MDN Web Docs' },
+          ];
+          const pCloses = [...generatedContent.matchAll(/<\/p>/g)];
+          const inserts = []; // { pos, text } - insert from end to start to preserve indices
+          for (let i = 0; i < injectLinks.length && inserts.length < 2; i++) {
+            const link = injectLinks[i];
+            if (generatedContent.includes(link.url)) continue;
+            const linkHtml = `<a href="${link.url}" target="_blank" rel="noopener noreferrer">${link.anchor}</a>`;
+            if (inserts.length === 0 && pCloses.length >= 1) {
+              inserts.push({ pos: pCloses[0].index, text: ` For more information, see ${linkHtml}.` });
+            } else if (inserts.length === 1 && pCloses.length >= 3) {
+              inserts.push({ pos: pCloses[2].index, text: ` Learn more on ${linkHtml}. ` });
+            }
+          }
+          inserts.sort((a, b) => b.pos - a.pos); // Insert from end first
+          for (const { pos, text } of inserts) {
+            generatedContent = generatedContent.slice(0, pos) + text + generatedContent.slice(pos);
+          }
+        }
       }
     }
 
