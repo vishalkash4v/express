@@ -209,6 +209,45 @@ exports.getDashboardAnalytics = async (req, res) => {
         }
       }
     ]);
+
+    // Latest page visits - pages ordered by most recent visit date
+    const latestPageVisitsRaw = await Analytics.aggregate([
+      {
+        $match: {
+          date: { $gte: startDate, $lte: endDate }
+        }
+      },
+      {
+        $group: {
+          _id: {
+            pageType: '$pageType',
+            pageId: '$pageId',
+            pagePath: '$pagePath',
+            pageTitle: '$pageTitle'
+          },
+          totalViews: { $sum: '$views' },
+          totalUniqueViews: { $sum: '$uniqueViews' },
+          lastVisitDate: { $max: '$date' },
+          daysActive: { $sum: 1 }
+        }
+      },
+      { $sort: { lastVisitDate: -1, totalViews: -1 } },
+      { $limit: 15 },
+      {
+        $project: {
+          _id: 0,
+          pageType: '$_id.pageType',
+          pageId: '$_id.pageId',
+          pagePath: '$_id.pagePath',
+          pageTitle: '$_id.pageTitle',
+          totalViews: 1,
+          totalUniqueViews: 1,
+          lastVisitDate: 1,
+          daysActive: 1
+        }
+      }
+    ]);
+    const latestPageVisits = latestPageVisitsRaw;
     
     // Get previous period totals for comparison
     const previousStats = await Analytics.aggregate([
@@ -285,6 +324,7 @@ exports.getDashboardAnalytics = async (req, res) => {
       })),
       topPages,
       trendingPages,
+      latestPageVisits,
       statsByType: statsByType.map(stat => ({
         pageType: stat._id,
         views: stat.totalViews,
