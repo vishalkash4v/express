@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const Analytics = require('../models/Analytics');
 const PageViewSession = require('../models/PageViewSession');
 const Blog = require('../models/Blog');
@@ -84,6 +85,100 @@ function generatePositiveHighlights(data) {
   }
   return highlights.slice(0, 6);
 }
+
+// Lightweight dashboard - top 5 pages, minimal data, ETag caching
+exports.getDashboardSimple = async (req, res) => {
+  try {
+    await connectDB();
+    const { period = '1d' } = req.query; // 1d (today), 7d (weekly), 30d (monthly)
+
+    const endDate = new Date();
+    endDate.setHours(23, 59, 59, 999);
+    let startDate = new Date();
+    let previousStartDate = new Date();
+    let previousEndDate = new Date();
+
+    switch (period) {
+      case '1d':
+        startDate.setHours(0, 0, 0, 0);
+        previousStartDate.setDate(startDate.getDate() - 1);
+        previousStartDate.setHours(0, 0, 0, 0);
+        previousEndDate.setDate(startDate.getDate() - 1);
+        previousEndDate.setHours(23, 59, 59, 999);
+        break;
+      case '7d':
+        startDate.setDate(endDate.getDate() - 7);
+        previousStartDate.setDate(endDate.getDate() - 14);
+        previousEndDate.setDate(endDate.getDate() - 8);
+        startDate.setHours(0, 0, 0, 0);
+        previousStartDate.setHours(0, 0, 0, 0);
+        previousEndDate.setHours(23, 59, 59, 999);
+        break;
+      case '30d':
+        startDate.setDate(endDate.getDate() - 30);
+        previousStartDate.setDate(endDate.getDate() - 60);
+        previousEndDate.setDate(endDate.getDate() - 31);
+        startDate.setHours(0, 0, 0, 0);
+        previousStartDate.setHours(0, 0, 0, 0);
+        previousEndDate.setHours(23, 59, 59, 999);
+        break;
+      default:
+        startDate.setDate(endDate.getDate() - 7);
+        previousStartDate.setDate(endDate.getDate() - 14);
+        previousEndDate.setDate(endDate.getDate() - 8);
+        startDate.setHours(0, 0, 0, 0);
+        previousStartDate.setHours(0, 0, 0, 0);
+        previousEndDate.setHours(23, 59, 59, 999);
+    }
+
+    const [dailyStats, topPages, previousStats, counts] = await Promise.all([
+      Analytics.getDailyStats(startDate, endDate),
+      Analytics.getTopPages(startDate, endDate, 5),
+      Analytics.aggregate([
+        { $match: { date: { $gte: previousStartDate, $lte: previousEndDate } } },
+        { $group: { _id: null, totalViews: { $sum: '$views' }, totalUniqueViews: { $sum: '$uniqueViews' } } }
+      ]),
+      Promise.all([
+        Blog.countDocuments({ status: 'published' }),
+        Tool.countDocuments({ isActive: true })
+      ])
+    ]);
+    const [blogCount, toolCount] = counts;
+
+    const currentTotal = dailyStats.reduce((sum, d) => sum + d.totalViews, 0);
+    const previousTotal = previousStats[0]?.totalViews || 0;
+    const changePercent = previousTotal > 0 ? (((currentTotal - previousTotal) / previousTotal) * 100).toFixed(1) : currentTotal > 0 ? 100 : 0;
+
+    const responseData = {
+      period,
+      overview: {
+        totalViews: currentTotal,
+        totalUniqueViews: dailyStats.reduce((s, d) => s + d.totalUniqueViews, 0),
+        changePercent: parseFloat(changePercent)
+      },
+      topPages,
+      dailyStats: dailyStats.map(d => ({ date: d.date, views: d.totalViews, uniqueViews: d.totalUniqueViews })),
+      positiveHighlights: generatePositiveHighlights({
+        overview: { totalViews: currentTotal, totalUniqueViews: dailyStats.reduce((s, d) => s + d.totalUniqueViews, 0), changePercent: parseFloat(changePercent), toolCount, blogCount },
+        topPages,
+        trendingPages: [],
+        blogAnalytics: topPages.filter(p => p.pageType === 'blog').slice(0, 1).map(p => ({ title: p.pageTitle, totalUniqueViews: p.totalUniqueViews }))
+      })
+    };
+
+    const body = JSON.stringify({ success: true, data: responseData });
+    const etag = crypto.createHash('md5').update(body).digest('hex');
+    res.setHeader('Cache-Control', 'private, max-age=60');
+    res.setHeader('ETag', `"${etag}"`);
+    if (req.headers['if-none-match'] === `"${etag}"`) {
+      return res.status(304).end();
+    }
+    res.json({ success: true, data: responseData });
+  } catch (error) {
+    console.error('getDashboardSimple error:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch analytics' });
+  }
+};
 
 // Helper to get blog analytics
 async function getBlogAnalytics(startDate, endDate) {
